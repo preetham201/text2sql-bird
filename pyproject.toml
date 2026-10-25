@@ -1,0 +1,10 @@
+[project]
+name = "text2sql-bird"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=2.3.0",
+    "pandas>=3.1.0",
+    "python-dotenv>=1.2.4",
+    "sqlglot>=30.24.0",
+]
