@@ -15,13 +15,13 @@ Each phase lists **You'll learn** — the concepts to understand well enough to 
 ## Phase 0 — Setup (a few days)
 **You'll learn:** project structure, env management, how BIRD is laid out, reading SQLite from Python.
 
-- [ ] `git init`, `.gitignore` (data/, .env, __pycache__, results/raw/)
-- [ ] Python env + dependency file
+- [x] `git init`, `.gitignore` (data/, .env, __pycache__, results/raw/)
+- [x] Python env + dependency file
 - [ ] Repo layout: `eval/ retrieval/ generation/ guardrails/ routing/ serving/ training/ results/`
-- [ ] Download BIRD dev (questions JSON + SQLite DBs + `database_description/` CSVs) → `data/bird/dev/`
+- [x] Download BIRD dev (questions JSON + SQLite DBs + `database_description/` CSVs) → `data/bird/dev/`
 - [ ] Download BIRD train → `data/bird/train/` (few-shot pool, later SFT)
-- [ ] Explore: open a dev DB, list tables, read 3 questions + their gold SQL + evidence
-- [ ] Frontier model chosen, API key in `.env`
+- [x] Explore: open a dev DB, list tables, read 3 questions + their gold SQL + evidence
+- [x] Frontier model chosen, API key in `.env`
 - [ ] Cost-logging utility (tokens in/out → $)
 - [ ] *(Optional)* Start PhysioNet credentialing for MIMIC — approval takes days
 
@@ -33,10 +33,10 @@ Each phase lists **You'll learn** — the concepts to understand well enough to 
 **You'll learn:** execution accuracy vs exact-match, result-set comparison edge cases, latency percentiles, cost accounting, prompt construction from a schema.
 
 ### Harness
-- [ ] Loader: question, evidence, db_id, gold SQL, difficulty
-- [ ] Executor: read-only SQLite connection, per-query timeout
-- [ ] Result-set comparison (handle ordering, duplicates, NULLs, float rounding)
-- [ ] **Validate: gold SQL as predictions must score 100%**
+- [x] Loader: question, evidence, db_id, gold SQL, difficulty
+- [x] Executor: read-only SQLite connection, per-query timeout
+- [x] Result-set comparison (handle ordering, duplicates, NULLs, float rounding)
+- [x] **Validate: gold SQL as predictions must score 100%**
 - [ ] Cross-check against BIRD's official eval script on a sample
 - [ ] Metrics: EX%, valid-SQL rate, p50/p95 latency, tokens, cost/1k queries
 - [ ] Per-question results saved to versioned CSV/Parquet in `results/`
