@@ -1,0 +1,31 @@
+# Data (BIRD is several GB; download separately)
+data/
+
+# Secrets
+.env
+.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Raw run outputs (keep summarized results only)
+results/raw/
+logs/
+
+# Models / indexes
+*.safetensors
+*.bin
+*.faiss
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Editor lock files
+.~lock.*#
