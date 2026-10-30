@@ -1,0 +1,100 @@
+question_id,db_id,difficulty,correct,exec_ok,exec_error,gen_error,pred_sql,gold_sql,input_tokens,output_tokens,cache_write_tokens,cache_read_tokens,cost_usd,gen_seconds,exec_seconds,total_seconds
+0,california_schools,simple,True,True,,,"SELECT MAX(`Free Meal Count (K-12)` / `Enrollment (K-12)`)
+FROM frpm
+WHERE `County Name` = 'Alameda'
+  AND `Enrollment (K-12)` > 0",SELECT `Free Meal Count (K-12)` / `Enrollment (K-12)` FROM frpm WHERE `County Name` = 'Alameda' ORDER BY (CAST(`Free Meal Count (K-12)` AS REAL) / `Enrollment (K-12)`) DESC LIMIT 1,1769,89,0,0,0.004428,1.9496453749998182,0.00707416099976399,1.9567195359995821
+1,california_schools,moderate,True,True,,,"SELECT `Free Meal Count (Ages 5-17)` / `Enrollment (Ages 5-17)`
+FROM frpm
+WHERE `Educational Option Type` = 'Continuation School'
+  AND `Enrollment (Ages 5-17)` > 0
+  AND `Free Meal Count (Ages 5-17)` IS NOT NULL
+ORDER BY `Free Meal Count (Ages 5-17)` / `Enrollment (Ages 5-17)` ASC
+LIMIT 3",SELECT `Free Meal Count (Ages 5-17)` / `Enrollment (Ages 5-17)` FROM frpm WHERE `Educational Option Type` = 'Continuation School' AND `Free Meal Count (Ages 5-17)` / `Enrollment (Ages 5-17)` IS NOT NULL ORDER BY `Free Meal Count (Ages 5-17)` / `Enrollment (Ages 5-17)` ASC LIMIT 3,1783,257,0,0,0.006136,2.6681094960003975,0.0053963089994795155,2.673505804999877
+2,california_schools,simple,True,True,,,"SELECT s.Zip
+FROM frpm f
+JOIN schools s ON f.CDSCode = s.CDSCode
+WHERE f.`Charter School (Y/N)` = 1
+  AND f.`District Name` = 'Fresno County Office of Education'",SELECT T2.Zip FROM frpm AS T1 INNER JOIN schools AS T2 ON T1.CDSCode = T2.CDSCode WHERE T1.`District Name` = 'Fresno County Office of Education' AND T1.`Charter School (Y/N)` = 1,1757,97,0,0,0.004484,1.9518375240004389,0.009540581000692328,1.9613781050011312
+3,california_schools,simple,True,True,,,"SELECT s.MailStreet
+FROM frpm f
+JOIN schools s ON s.CDSCode = f.CDSCode
+ORDER BY f.`FRPM Count (K-12)` DESC
+LIMIT 1",SELECT T2.MailStreet FROM frpm AS T1 INNER JOIN schools AS T2 ON T1.CDSCode = T2.CDSCode ORDER BY T1.`FRPM Count (K-12)` DESC LIMIT 1,1729,86,0,0,0.004318,1.7117292899984022,0.004511679000643198,1.7162409689990454
+4,california_schools,moderate,True,True,,,"SELECT s.Phone
+FROM frpm f
+JOIN schools s ON f.CDSCode = s.CDSCode
+WHERE f.`Charter Funding Type` = 'Directly funded'
+  AND f.`Charter School (Y/N)` = 1
+  AND s.OpenDate > '2000-01-01'",SELECT T2.Phone FROM frpm AS T1 INNER JOIN schools AS T2 ON T1.CDSCode = T2.CDSCode WHERE T1.`Charter Funding Type` = 'Directly funded' AND T1.`Charter School (Y/N)` = 1 AND T2.OpenDate > '2000-01-01',1763,204,0,0,0.005566,2.4511022989991034,0.005281695999656222,2.4563839949987596
+5,california_schools,simple,True,True,,,"SELECT COUNT(*)
+FROM satscores s
+JOIN schools c ON s.cds = c.CDSCode
+WHERE s.AvgScrMath > 400 AND c.Virtual = 'F'",SELECT COUNT(DISTINCT T2.School) FROM satscores AS T1 INNER JOIN schools AS T2 ON T1.cds = T2.CDSCode WHERE T2.Virtual = 'F' AND T1.AvgScrMath > 400,1753,135,0,0,0.004856,2.1450760850002553,0.005769070001406362,2.1508451550016616
+6,california_schools,simple,True,True,,,"SELECT s.School
+FROM satscores AS t
+JOIN schools AS s ON s.CDSCode = t.cds
+WHERE t.NumTstTakr > 500
+  AND s.Magnet = 1",SELECT T2.School FROM satscores AS T1 INNER JOIN schools AS T2 ON T1.cds = T2.CDSCode WHERE T2.Magnet = 1 AND T1.NumTstTakr > 500,1763,80,0,0,0.004326,1.6863260789996275,0.006415469999410561,1.692741548999038
+7,california_schools,simple,True,True,,,"SELECT s.Phone
+FROM satscores AS sc
+JOIN schools AS s ON s.CDSCode = sc.cds
+ORDER BY sc.NumGE1500 DESC
+LIMIT 1",SELECT T2.Phone FROM satscores AS T1 INNER JOIN schools AS T2 ON T1.cds = T2.CDSCode ORDER BY T1.NumGE1500 DESC LIMIT 1,1727,82,0,0,0.004274,1.6610411309993651,0.002095379000820685,1.6631365100001858
+8,california_schools,simple,True,True,,,"SELECT s.NumTstTakr
+FROM satscores s
+JOIN frpm f ON s.cds = f.CDSCode
+WHERE f.`FRPM Count (K-12)` = (SELECT MAX(`FRPM Count (K-12)`) FROM frpm)",SELECT NumTstTakr FROM satscores WHERE cds = ( SELECT CDSCode FROM frpm ORDER BY `FRPM Count (K-12)` DESC LIMIT 1 ),1727,103,0,0,0.004484,1.8949914179993357,0.002563378000559169,1.8975547959998948
+9,california_schools,simple,True,True,,,"SELECT COUNT(*)
+FROM satscores s
+JOIN frpm f ON s.cds = f.CDSCode
+WHERE s.AvgScrMath > 560
+  AND f.`Charter Funding Type` = 'Directly funded'",SELECT COUNT(T2.`School Code`) FROM satscores AS T1 INNER JOIN frpm AS T2 ON T1.cds = T2.CDSCode WHERE T1.AvgScrMath > 560 AND T2.`Charter Funding Type` = 'Directly funded',1732,202,0,0,0.005484,2.8306546910007455,0.0014056210002308944,2.8320603120009764
+10,california_schools,simple,False,True,,,"SELECT f.`FRPM Count (Ages 5-17)`
+FROM satscores s
+JOIN frpm f ON f.CDSCode = s.cds
+WHERE s.AvgScrRead = (SELECT MAX(AvgScrRead) FROM satscores)",SELECT T2.`FRPM Count (Ages 5-17)` FROM satscores AS T1 INNER JOIN frpm AS T2 ON T1.cds = T2.CDSCode ORDER BY T1.AvgScrRead DESC LIMIT 1,1733,101,0,0,0.004476,1.8585798210006033,0.0005453839985420927,1.8591252049991454
+11,california_schools,simple,True,True,,,"SELECT CDSCode
+FROM frpm
+WHERE `Enrollment (K-12)` + `Enrollment (Ages 5-17)` > 500",SELECT T2.CDSCode FROM schools AS T1 INNER JOIN frpm AS T2 ON T1.CDSCode = T2.CDSCode WHERE T2.`Enrollment (K-12)` + T2.`Enrollment (Ages 5-17)` > 500,1763,62,0,0,0.004146,1.5301524740007153,0.06616307299918844,1.5963155469999037
+12,california_schools,moderate,True,True,,,"SELECT MAX(f.`Free Meal Count (Ages 5-17)` / f.`Enrollment (Ages 5-17)`)
+FROM frpm f
+JOIN satscores s ON f.CDSCode = s.cds
+WHERE s.NumTstTakr > 0
+  AND CAST(s.NumGE1500 AS REAL) / s.NumTstTakr > 0.3
+  AND f.`Enrollment (Ages 5-17)` > 0",SELECT MAX(CAST(T1.`Free Meal Count (Ages 5-17)` AS REAL) / T1.`Enrollment (Ages 5-17)`) FROM frpm AS T1 INNER JOIN satscores AS T2 ON T1.CDSCode = T2.cds WHERE CAST(T2.NumGE1500 AS REAL) / T2.NumTstTakr > 0.3,1818,168,0,0,0.005316,2.106091373001618,0.0011279939990345156,2.1072193670006527
+13,california_schools,simple,True,True,,,"SELECT s.Phone
+FROM satscores AS t
+JOIN schools AS s ON s.CDSCode = t.cds
+WHERE t.NumTstTakr > 0
+ORDER BY CAST(t.NumGE1500 AS REAL) / t.NumTstTakr DESC
+LIMIT 3",SELECT T1.Phone FROM schools AS T1 INNER JOIN satscores AS T2 ON T1.CDSCode = T2.cds ORDER BY CAST(T2.NumGE1500 AS REAL) / T2.NumTstTakr DESC LIMIT 3,1751,116,0,0,0.004662,1.371691770000325,0.0009441950005566468,1.3726359650008817
+14,california_schools,simple,True,True,,,"SELECT s.NCESSchool
+FROM frpm f
+JOIN schools s ON f.CDSCode = s.CDSCode
+ORDER BY f.`Enrollment (Ages 5-17)` DESC
+LIMIT 5",SELECT T1.NCESSchool FROM schools AS T1 INNER JOIN frpm AS T2 ON T1.CDSCode = T2.CDSCode ORDER BY T2.`Enrollment (Ages 5-17)` DESC LIMIT 5,1748,90,0,0,0.004396,1.8724230060015543,0.003370424999957322,1.8757934310015116
+15,california_schools,simple,True,True,,,"SELECT s.District
+FROM satscores AS t
+JOIN schools AS s ON t.cds = s.CDSCode
+WHERE s.StatusType = 'Active'
+  AND t.AvgScrRead IS NOT NULL
+ORDER BY t.AvgScrRead DESC
+LIMIT 1",SELECT T1.District FROM schools AS T1 INNER JOIN satscores AS T2 ON T1.CDSCode = T2.cds WHERE T1.StatusType = 'Active' ORDER BY T2.AvgScrRead DESC LIMIT 1,1711,268,0,0,0.006102,2.673582207000436,0.013706748000913649,2.6872889550013497
+16,california_schools,simple,False,True,,,SELECT COUNT(*) FROM satscores WHERE cname = 'Alameda' AND NumTstTakr < 100,SELECT COUNT(T1.CDSCode) FROM schools AS T1 INNER JOIN satscores AS T2 ON T1.CDSCode = T2.cds WHERE T1.StatusType = 'Merged' AND T2.NumTstTakr < 100 AND T1.County = 'Lake',1718,105,0,0,0.004486,2.0015995089997887,0.001011431999359047,2.0026109409991477
+17,california_schools,simple,True,True,,,"SELECT s.CharterNum, sc.AvgScrWrite, RANK() OVER (ORDER BY sc.AvgScrWrite DESC) AS rank
+FROM satscores sc
+JOIN schools s ON s.CDSCode = sc.cds
+WHERE sc.AvgScrWrite > 499 AND s.CharterNum IS NOT NULL
+ORDER BY sc.AvgScrWrite DESC","SELECT CharterNum, AvgScrWrite, RANK() OVER (ORDER BY AvgScrWrite DESC) AS WritingScoreRank FROM schools AS T1  INNER JOIN satscores AS T2 ON T1.CDSCode = T2.cds WHERE T2.AvgScrWrite > 499 AND CharterNum is not null",1745,238,0,0,0.00587,2.5878735890000826,0.002669991999937338,2.59054358100002
+18,california_schools,simple,True,True,,,"SELECT COUNT(*)
+FROM frpm f
+JOIN satscores s ON f.CDSCode = s.cds
+WHERE f.`County Name` = 'Fresno'
+  AND f.`Charter Funding Type` = 'Directly funded'
+  AND s.NumTstTakr <= 250",SELECT COUNT(T1.CDSCode) FROM frpm AS T1 INNER JOIN satscores AS T2 ON T1.CDSCode = T2.cds WHERE T1.`Charter Funding Type` = 'Directly funded' AND T1.`County Name` = 'Fresno' AND T2.NumTstTakr <= 250,1723,214,0,0,0.005586,2.377698323000004,0.002973484999529319,2.3806718079995335
+19,california_schools,simple,True,True,,,"SELECT s.Phone
+FROM satscores AS t
+JOIN schools AS s ON s.CDSCode = t.cds
+WHERE t.AvgScrMath IS NOT NULL
+ORDER BY t.AvgScrMath DESC
+LIMIT 1",SELECT T1.Phone FROM schools AS T1 INNER JOIN satscores AS T2 ON T1.CDSCode = T2.cds ORDER BY T2.AvgScrMath DESC LIMIT 1,1716,101,0,0,0.004442,1.8184438810003485,0.0007867410004109843,1.8192306220007595

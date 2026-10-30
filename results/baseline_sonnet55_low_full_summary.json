@@ -1,0 +1,38 @@
+{
+  "run": "baseline_sonnet55_low_full",
+  "model": "claude-sonnet-5-5",
+  "effort": "low",
+  "limit": null,
+  "workers": 4,
+  "stopped_early": false,
+  "wall_seconds": 926.9005554380001,
+  "prompt": "full schema DDL + evidence + question",
+  "n": 1534,
+  "ex_pct": 68.38331160365058,
+  "valid_sql_pct": 100.0,
+  "api_error_count": 0,
+  "latency_p50_s": 2.08386522300043,
+  "latency_p95_s": 4.455345118350668,
+  "prompt_tokens_mean": 1668.816818774446,
+  "cache_read_pct": 94.35390718232476,
+  "output_tokens_mean": 120.9960886571056,
+  "total_cost_usd": 2.6415929,
+  "cost_per_1k_usd": 1.7220292698826598,
+  "by_difficulty": {
+    "simple": {
+      "n": 925,
+      "ex_pct": 74.59,
+      "valid_sql_pct": 100.0
+    },
+    "moderate": {
+      "n": 464,
+      "ex_pct": 59.27,
+      "valid_sql_pct": 100.0
+    },
+    "challenging": {
+      "n": 145,
+      "ex_pct": 57.93,
+      "valid_sql_pct": 100.0
+    }
+  }
+}

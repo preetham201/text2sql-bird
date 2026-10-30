@@ -11,9 +11,12 @@
 | 2. Executor | `eval/executor.py` | ✅ |
 | 3. Comparator | `eval/compare.py` | ✅ |
 | 4. Gold cache + validation | `eval/gold_cache.py`, `eval/validate_harness.py` | ✅ 100% |
-| 5. Prompt + model client | `generation/` | ⬜ |
-| 6. Runner + metrics | `eval/run.py` | ⬜ |
-| 7. Baseline run | — | ⬜ |
+| 5. Prompt + model client | `generation/cost.py`, `prompt.py`, `claude_client.py` | ✅ |
+| 6. Runner + metrics | `eval/run.py`, `eval/metrics.py` | ✅ |
+| 7. Baseline run + checks | `eval/official_check.py` | ✅ **68.38% EX** |
+| 8. Failure taxonomy | `eval/failure_sample.py`, `results/failure_labels_baseline.csv` | ✅ 40 labelled |
+
+Model choice is explained separately in [phase1-model-choice.md](phase1-model-choice.md).
 
 ---
 
@@ -103,9 +106,103 @@
 
 ---
 
+## Step 5 — Prompt + model client (`generation/`)
+
+### `generation/cost.py`
+**Job:** tokens to dollars. One price table (`PRICES`), one function `cost_usd()`.
+- Prices are **per 1M tokens**, so: `tokens * price / 1_000_000`.
+- Four token kinds: normal input, output (includes thinking), cache write (1.25× input), cache read (~0.1× input).
+- An unknown model raises `KeyError` on purpose: a guessed price would silently corrupt every cost number.
+
+### `generation/prompt.py`
+**Job:** build `(system, user)` for one question.
+- **system** = instructions + full schema DDL. Same for every question on one database, so it's the cacheable part.
+- **user** = `Hint: <evidence>` + `Question: ...`. The hint line is skipped when evidence is empty.
+- `schema_ddl()` reads the original `CREATE TABLE` text from SQLite's built-in `sqlite_master` table, so there's no hand-built DDL to get wrong.
+- `@lru_cache` remembers a function's result per argument: 11 schemas are read once instead of 1,534 times.
+
+### `generation/claude_client.py`
+**Job:** one API call, then a `Generation` with the SQL, tokens, cost, time and any error.
+- `output_config={"effort": effort}`: how much the model thinks. Set explicitly so runs don't change if the API default does.
+- `cache_control: ephemeral` on the system block turns on **prompt caching**, which changes cost only, never the answer.
+- `extract_sql()`: a regex takes the **last** ```sql block (`.*?` = shortest match, `re.DOTALL` = `.` also matches newlines). If there are no fences, it uses the whole text.
+- **Never raises:** API errors (after the SDK's own 2 retries), refusals and `max_tokens` cut-offs come back in `error`. One bad call must not kill a 1,534-question run.
+- `response.content` is a list of blocks (thinking, text); we join only the `text` blocks.
+
+---
+
+## Step 6 — Runner + metrics (`eval/run.py`, `eval/metrics.py`)
+
+**Flow per question (`run_one`)**: build prompt → generate → `score_sql` (execute with 30s limit, compare to cached gold) → one CSV row + one raw JSONL record.
+
+- **Threads (`ThreadPoolExecutor`)**: API calls mostly wait on the network, so 4 in flight ≈ 4× faster. `as_completed` hands back results in finishing order; we sort by `question_id` before saving.
+- **Budget stop (`--max-cost`)**: running total of cost; above the cap → `pool.shutdown(cancel_futures=True)` drops questions not yet started.
+- **`--rescore`**: re-executes the saved SQL with no API calls. This is our reproducibility check.
+- **Outputs**: `results/<run>.csv` (committed evidence), `_summary.json` (metrics + settings), `results/raw/<run>.jsonl` (full prompts/answers, gitignored).
+
+**Metrics (`summarize`)**
+- **EX%**: share of questions where result sets match.
+- **Valid-SQL %**: share that executed without error (right or wrong).
+- **p50 / p95 latency**: median, and the time 95% of questions beat (the slow tail users notice). Latency = API call + SQL execution.
+- **Prompt tokens** = uncached + cache-write + cache-read (the API reports them separately).
+- **Cost per 1k** = total cost / n × 1000, which is comparable across runs of different sizes.
+
+---
+
+## Step 7 — Baseline result (row 1)
+
+Config: `claude-sonnet-5-5`, effort `low`, full schema DDL + evidence + question, prompt caching on, 30s timeout.
+
+| Metric | Value |
+|---|---|
+| **EX** | **68.38%** (1,049 / 1,534) |
+| simple / moderate / challenging | 74.59% / 59.27% / 57.93% (n = 925 / 464 / 145) |
+| Valid SQL | 100.00% |
+| Latency p50 / p95 | 2.08s / 4.46s |
+| Prompt tokens / question | 1,669 (94% read from cache) |
+| Output tokens / question | 121 |
+| Cost | $2.64 total, **$1.72 per 1k questions** |
+| Wall time | 15.5 min, 4 workers |
+
+**Checks**
+- **Reproducible:** `--rescore` on the saved SQL → 68.38% again, 0 questions changed.
+- **Matches the official scorer:** `eval/official_check.py` copies the official `execute_sql()` line for line (but read-only). On 200 sampled questions, 200/200 verdicts agree.
+- Found while reading the official script: it opens the DB **read-write** (a generated `DROP` would damage the data), and its 30s timeout covers pred + gold together, which is why Q518/Q701 can never score there.
+
+---
+
+## Step 8 — Failure taxonomy (40 of 485 failures, seed 0)
+
+| Category | Count | Meaning |
+|---|---|---|
+| gold_questionable | 12 (30%) | the gold SQL contradicts the question or hint (e.g. counts lab rows when asked "how many patients") |
+| output_format | 9 (22%) | right logic, but extra / missing / reordered columns |
+| ambiguity | 4 (10%) | question supports more than one reasonable reading |
+| wrong_join | 3 (8%) | missing/extra join or join type that changes row counts |
+| filter_value | 3 (8%) | wrong literal or extra filter (incl. a hint with a typo) |
+| wrong_table | 3 (8%) | right idea, value taken from the wrong table |
+| aggregation | 2 (5%) | wrong numerator/denominator or aggregate |
+| superlative_ties | 2 (5%) | `= (SELECT MAX…)` returns all ties; gold `ORDER BY … LIMIT 1` returns one |
+| wrong_column | 2 (5%) | wrong column for the asked attribute |
+| syntax | 0 | valid SQL was 100% |
+
+We added three categories to the planned list (gold_questionable, output_format, superlative_ties) because they kept showing up and fit none of the originals.
+
+**What this means for later phases (the important part)**
+1. **About half of "failures" aren't really model errors** (questionable gold + output format = 52%). BIRD's gold SQL has known noise. Real headroom is smaller than 100 − 68.
+2. **Zero syntax/runtime errors.** Phase 3's error-feedback retry loop can't recover anything for Sonnet on this prompt. That's a valid result for H2: the retry loop is for the small model in Phase 4, not this one.
+3. **Output format is cheap to fix** with a prompt rule ("return only the columns asked, in the order mentioned"). But tuning prompts on dev is exactly the overfitting trap, so any such change must be chosen on a held-out slice.
+4. Only ~8% are wrong_table. Schema retrieval (Phase 2) mainly has to **not lose** needed tables; it's unlikely to add much accuracy on these small schemas. Its win should be cost/tokens.
+
+---
+
 ## Interview questions
 1. *How do you know your eval harness is correct?* — Gold-as-prediction must score 100%; we found 2 queries slower than the official timeout and documented the 99.87% ceiling.
 2. *How do you enforce a timeout in SQLite?* — Progress handler callback that aborts after a deadline.
 3. *What's the real security boundary for executing generated SQL?* — Database permissions (read-only connection/role), not parsing the SQL text.
 4. *What are the weaknesses of BIRD's execution accuracy?* — Ignores row order and duplicates; penalizes extra columns; exact float match.
 5. *Why cache gold results?* — Deterministic, expensive to recompute; makes every eval run faster.
+6. *What's your baseline and how much did it cost?* — Sonnet 5.5, full schema: 68.38% EX, $1.72 per 1k questions, p95 4.5s.
+7. *How did you verify your scorer matches the official one?* — Copied the official compare function, ran it on 200 sampled predictions: 200/200 agree.
+8. *What do your baseline's failures look like?* — Zero syntax errors; about half are gold-label noise or column-format mismatches, not reasoning errors.
+9. *Why don't you just fix the output-format failures with the prompt?* — Tuning on the reporting set is overfitting; it has to be selected on a held-out slice.

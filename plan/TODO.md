@@ -22,7 +22,7 @@ Each phase lists **You'll learn** — the concepts to understand well enough to 
 - [ ] Download BIRD train → `data/bird/train/` (few-shot pool, later SFT)
 - [x] Explore: open a dev DB, list tables, read 3 questions + their gold SQL + evidence
 - [x] Frontier model chosen, API key in `.env`
-- [ ] Cost-logging utility (tokens in/out → $)
+- [x] Cost-logging utility (tokens in/out → $)
 - [ ] *(Optional)* Start PhysioNet credentialing for MIMIC — approval takes days
 
 **Done when:** you can load a BIRD database and run a gold query from code.
@@ -37,25 +37,28 @@ Each phase lists **You'll learn** — the concepts to understand well enough to 
 - [x] Executor: read-only SQLite connection, per-query timeout
 - [x] Result-set comparison (handle ordering, duplicates, NULLs, float rounding)
 - [x] **Validate: gold SQL as predictions must score 100%**
-- [ ] Cross-check against BIRD's official eval script on a sample
-- [ ] Metrics: EX%, valid-SQL rate, p50/p95 latency, tokens, cost/1k queries
-- [ ] Per-question results saved to versioned CSV/Parquet in `results/`
-- [ ] Breakdown by difficulty (simple / moderate / challenging)
-- [ ] `--limit N` flag for quick subset runs
+- [x] Cross-check against BIRD's official eval script on a sample
+- [x] Metrics: EX%, valid-SQL rate, p50/p95 latency, tokens, cost/1k queries
+- [x] Per-question results saved to versioned CSV/Parquet in `results/`
+- [x] Breakdown by difficulty (simple / moderate / challenging)
+- [x] `--limit N` flag for quick subset runs
 
 ### Baseline
-- [ ] Prompt: full schema DDL + evidence + question
-- [ ] Run on full dev → **ablation row 1**
-- [ ] Failure taxonomy started: wrong table / join / column / aggregation / filter value / syntax / ambiguity
-- [ ] Label ~30–50 failures with the taxonomy
+- [x] Prompt: full schema DDL + evidence + question
+- [x] Run on full dev → **ablation row 1**
+- [x] Failure taxonomy started: wrong table / join / column / aggregation / filter value / syntax / ambiguity
+- [x] Label ~30–50 failures with the taxonomy
 
 **Done when:** row 1 exists and re-running gives the same results.
+
+✅ **Done (2026-10-30):** Sonnet 5.5 full schema = 68.38% EX, $1.72/1k, p95 4.46s; `--rescore` reproduces exactly; 200/200 agree with official scorer logic.
 
 ---
 
 ## Phase 2 — Schema retrieval (weeks 3–4)
 **You'll learn:** BM25 (keyword search), dense embeddings, reciprocal rank fusion, cross-encoder reranking, recall as a ceiling on accuracy, FK graphs.
 
+- [ ] Fixed tune/report split of dev (`eval/splits.py`), used through Phase 5
 - [ ] Extract per DB: tables, columns, types, FKs
 - [ ] Enrich: column descriptions + 3–5 sample values per column
 - [ ] BM25 index
@@ -161,7 +164,7 @@ Each phase lists **You'll learn** — the concepts to understand well enough to 
 
 | Configuration | EX% | Schema recall | p95 latency | Cost / 1k queries |
 |---|---|---|---|---|
-| Frontier, full schema (baseline) | | n/a | | |
+| Frontier, full schema (baseline) | 68.38% | n/a | 4.46s | $1.72 |
 | + schema retrieval | | | | |
 | + guardrails and retries | | | | |
 | Small model, same pipeline | | | | |

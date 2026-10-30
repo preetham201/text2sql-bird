@@ -1,0 +1,32 @@
+{
+  "run": "test20_haiku_medium",
+  "model": "claude-haiku-5-5",
+  "effort": "medium",
+  "limit": 20,
+  "workers": 4,
+  "stopped_early": false,
+  "wall_seconds": 12.81992872400042,
+  "prompt": "full schema DDL + evidence + question",
+  "n": 20,
+  "ex_pct": 75.0,
+  "valid_sql_pct": 100.0,
+  "api_error_count": 0,
+  "latency_p50_s": 2.0278324840001005,
+  "latency_p95_s": 3.153094264849097,
+  "input_tokens_mean": 1746.45,
+  "output_tokens_mean": 312.55,
+  "total_cost_usd": 0.006618400000000001,
+  "cost_per_1k_usd": 0.33092000000000005,
+  "by_difficulty": {
+    "simple": {
+      "n": 17,
+      "ex_pct": 82.35,
+      "valid_sql_pct": 100.0
+    },
+    "moderate": {
+      "n": 3,
+      "ex_pct": 33.33,
+      "valid_sql_pct": 100.0
+    }
+  }
+}

@@ -1,0 +1,41 @@
+question_id,category,note
+81,gold_questionable,gold ORDER BY Latitude ASC puts NULL latitudes first; pred skips NULLs and finds the real southernmost school
+136,ambiguity,pred reads "approved" as status IN ('A','C'); gold ignores status
+169,wrong_join,joins every disposition (owner + disponent) so loans are double-counted; gold keeps type = 'OWNER'
+172,output_format,two grouped rows (type, count) instead of one row with two counts
+247,ambiguity,pred: atoms with no bond on either side; gold: elements never appearing as atom_id in connected
+252,output_format,returns only the bonded atom; gold returns (atom_id, atom_id2) pairs
+352,aggregation,followed the hint literally (SUM of id) instead of counting rows; also skips the cards join
+398,filter_value,added manaCost IS NOT NULL which drops rows gold keeps
+405,filter_value,hint says 'Portuguese (Brasil)' but the data says 'Portuguese (Brazil)'; pred trusted the hint
+430,output_format,columns (id, name) vs gold (name, id); also sorted by name vs id
+444,ambiguity,"foreign name" read as foreign_data.name; gold returns the English cards.name
+447,wrong_table,used sets.code; hint points at set_translations.setCode (only sets with translations)
+557,wrong_join,LEFT JOIN keeps posts with no owner in the denominator; gold uses INNER JOIN
+608,gold_questionable,question says 7:25:47 PM but hint and gold use 19:16:14; pred followed the question
+642,gold_questionable,question asks about posts; gold counts postHistory rows
+683,aggregation,filtered the denominator by year; hint/gold put the year condition only in the numerator
+810,superlative_ties,MAX() subquery returns all 278 tied rows; gold ORDER BY ... LIMIT 1 returns one
+832,superlative_ties,MAX() subquery returns both tied heroes; gold LIMIT 1 returns one
+889,wrong_column,returned year; gold returns the race date
+894,output_format,returns time string instead of milliseconds column and in a different column order
+928,output_format,returns only driverRef (what was asked); gold also returns forename and surname
+984,wrong_table,counted wins from results; gold uses constructorStandings.wins
+1000,gold_questionable,hint says full location = location + country; gold returns location only
+1015,output_format,extra year column; also used lapTimes instead of results.FastestLapTime
+1175,wrong_join,extra join to Examination (unneeded) leaves zero rows
+1203,gold_questionable,question asks how many patients; gold counts lab rows (641) not distinct patients (88)
+1224,output_format,gold also returns the T-BIL value; pred returns only the patient details asked for
+1227,gold_questionable,gold averages over lab rows (patients repeated); pred averages over distinct patients
+1254,gold_questionable,gold counts lab rows and uses > '1990' while hint says >= 1990
+1268,gold_questionable,gold join duplicates a patient so LIMIT 3 returns 2 distinct IDs
+1275,gold_questionable,gold filter values ('negative','0') contradict the hint ('-','+-'); pred followed the hint
+1289,gold_questionable,question asks how many patients; gold counts lab rows
+1300,wrong_table,Diagnosis taken from Patient; gold uses Examination.Diagnosis
+1421,gold_questionable,pred matches the hint formula exactly; gold moves position = 'Member' to the denominator
+1422,wrong_column,"category" mapped to event.type; gold uses budget.category
+1441,filter_value,exact 'education' (case-sensitive) instead of matching 'Education'
+1450,ambiguity,"more than forty incomes" read as a count of incomes; hint says amount > 40
+1454,gold_questionable,pred follows the hint formula; gold computes a different percentage
+1455,output_format,extra category column
+1486,output_format,extra True/False column besides the difference

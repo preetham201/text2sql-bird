@@ -1,0 +1,32 @@
+{
+  "run": "test20_sonnet_low",
+  "model": "claude-sonnet-5-5",
+  "effort": "low",
+  "limit": 20,
+  "workers": 4,
+  "stopped_early": false,
+  "wall_seconds": 11.030951954999182,
+  "prompt": "full schema DDL + evidence + question",
+  "n": 20,
+  "ex_pct": 95.0,
+  "valid_sql_pct": 100.0,
+  "api_error_count": 0,
+  "latency_p50_s": 1.9760257890002322,
+  "latency_p95_s": 2.7567997306494365,
+  "input_tokens_mean": 1746.45,
+  "output_tokens_mean": 130.9,
+  "total_cost_usd": 0.096038,
+  "cost_per_1k_usd": 4.8019,
+  "by_difficulty": {
+    "simple": {
+      "n": 17,
+      "ex_pct": 94.12,
+      "valid_sql_pct": 100.0
+    },
+    "moderate": {
+      "n": 3,
+      "ex_pct": 100.0,
+      "valid_sql_pct": 100.0
+    }
+  }
+}
