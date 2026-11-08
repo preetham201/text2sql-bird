@@ -74,18 +74,20 @@ Notes: [phase1-eval-harness.md](phase1-eval-harness.md) · model choice: [phase1
 Notes: `phase2-retrieval.md` (written as we build)
 
 **Question it answers (H1):** can we send the model only the relevant part of the schema, cutting tokens and cost, without losing accuracy?
-**Done when:** a full-vs-pruned ablation shows tokens, cost, schema recall and EX%, broken down by schema size.
+**Done when:** a full-vs-pruned ablation shows tokens, compression, cost, schema recall and EX%, broken down by schema size.
+
+**Plan v2 (merged with BIRD2):** all tuning happens on **BIRD train** (9,428 questions, 69 databases, gold SQL included). Dev is only for the final numbers.
 
 **What Phase 1 already tells us (set expectations honestly)**
 - BIRD dev schemas are small: 3–14 tables, about 300–2,000 tokens. The full prompt is ~1,700 tokens and 94% of it is already served from cache. So the **cost saving on Sonnet will be small**. Report it anyway; the bigger payoff is Phase 4, where a 7B model's accuracy suffers from long, noisy prompts.
 - Only ~8% of labelled failures were wrong_table, so retrieval is unlikely to add much accuracy. Its first job is to **not lose** a table or column the query needs. That's why **schema recall** is the key metric: if recall is 95%, ~95% is the ceiling.
-- **Most of Phase 2 costs nothing:** schema recall is computed offline from gold SQL, with no API calls. Only the final ablation runs spend credit (~$2.6 per full-dev Sonnet run; ~$6.7 left).
+- **Most of Phase 2 costs nothing:** schema recall is computed offline from gold SQL, with no API calls. Only the final ablation run spends credit (~$2.6 per full-dev Sonnet run; ~$6.7 left).
 
 **Build order** (each file depends only on files above it)
 
 | # | File | What it does | Concepts to know first | Depends on | Status |
 |---|---|---|---|---|---|
-| 1 | `eval/splits.py` | Fixed split of dev into a **tune** slice (~20%) and a **report** slice (~80%), stratified by database and difficulty. Used from here to Phase 5 | stratified sampling, `random.seed`, why tuning on the test set is cheating | data | ⬜ |
+| 1 | `eval/data.py` (extend) + BIRD train download | `load_split("train" or "dev")`; train databases live in `data/bird/train/`. Train = where we tune; dev = where we report | train/dev/test roles, why tuning on the test set is cheating, default arguments | — | 🔨 downloading |
 | 2 | `retrieval/schema.py` | Per DB: tables, columns, types, PK/FKs (`PRAGMA table_info` / `foreign_key_list`), column descriptions from `database_description/*.csv`, 3–5 sample values per column | SQLite `PRAGMA`, `csv`/pandas reading, dataclasses for structured data | data | ⬜ |
 | 3 | `eval/schema_recall.py` | Parse gold SQL with sqlglot → the tables/columns it uses; recall = share of those that retrieval kept | ASTs (a tree view of SQL), sqlglot `parse_one`, `find_all`, aliases (`T1`) | schema | ⬜ |
 | 4 | `retrieval/bm25.py` | Keyword search: question → ranked columns | tokenization, TF-IDF intuition, BM25 (`rank_bm25`) | schema | ⬜ |
@@ -94,15 +96,13 @@ Notes: `phase2-retrieval.md` (written as we build)
 | 7 | `retrieval/fk_expand.py` | Add join keys and bridge tables so the kept tables can actually be joined | graphs, FK edges, shortest paths (BFS) | schema | ⬜ |
 | 8 | `retrieval/pipeline.py` | question → pruned schema DDL (+ descriptions/sample values) | composing the steps, config objects | 4–7 | ⬜ |
 | 9 | `generation/prompt.py` (extend) | Option to build the prompt from the pruned schema | keeping old behaviour as the default | pipeline | ⬜ |
-| 10 | `eval/run.py` (extend) | `--schema full|pruned`, `--split report`, recall + schema size in results | — | all above | ⬜ |
+| 10 | `eval/run.py` (extend) | `--schema full|pruned`, `--split dev|train`, recall + compression + schema size in results | — | all above | ⬜ |
 
 **Experiments, in order**
-1. **Recall only (free):** each retriever's schema recall at several K, measured on the **tune** slice. Pick K and the fusion setup there.
-2. **Recall on report (free):** confirm the chosen setup on the report slice.
-3. **Ablation rows (paid, on the report slice):** run each variant on the report slice and compare it with the baseline on the same questions, so only one thing changes at a time.
-   - row 1 (re-scored on the report slice): full schema (we already have these predictions, so this costs nothing)
-   - row 2: pruned schema, same DDL format
-   - row 2b: pruned schema + descriptions + sample values, only if budget allows
+1. **Recall on train (free):** each retriever's schema recall and token compression at several K. Pick K and the fusion setup here.
+2. **Recall on dev (free):** confirm the chosen setup holds on dev (different databases, so it's a real generalisation test).
+3. **Ablation (paid, dev):** row 2 = pruned schema, same DDL format, compared with row 1 on the same 1,534 questions. Only one thing changes.
+   - row 2b: pruned schema + descriptions + sample values, only if budget allows.
 4. Break results down by schema size (number of tables/columns per DB).
 
 **New dependencies:** `rank-bm25`, `sentence-transformers`, `faiss-cpu` (the GPU isn't needed at this scale: a few hundred columns).
@@ -112,7 +112,7 @@ Notes: `phase2-retrieval.md` (written as we build)
 - Why does BM25 find `CDSCode` when dense search might not, and the reverse for "pupils" → `Enrollment`?
 - What does RRF do that averaging the two scores doesn't?
 - Why can pruning to the top-K columns break a query even when every needed column is retrieved? (Hint: joins.)
-- Why do we choose K on the tune slice and report on the other slice?
+- Why do we choose K on train and report on dev? What would go wrong if we picked K on dev?
 
 ---
 
@@ -129,12 +129,13 @@ Notes: `phase2-retrieval.md` (written as we build)
 | `generation/vllm_client.py` | Call local Qwen-Coder via vLLM | vLLM, quantization (AWQ/GPTQ), OpenAI-compatible APIs |
 | `eval/cost.py` | GPU-hour cost per query | cost modeling |
 
-## Phase 5 — Confidence routing ⬜
+## Phase 5 — Two-gate routing ⬜
 | File | What it does | New concepts |
 |---|---|---|
-| `routing/signals.py` | logprobs, retry count, self-consistency | log probabilities, sampling |
-| `routing/calibrate.py` | Accuracy vs signal, threshold sweep | calibration, held-out splits |
-| `routing/router.py` | Small model or escalate? | cost/accuracy trade-off |
+| `routing/cascade.py` | Naive cascade: small → 1 retry → Gate 2 → frontier (the p95 problem) | cascades, tail latency |
+| `routing/gate1.py` | Pre-generation router: P(small model correct) from retrieval features, trained on train | feature engineering, logistic regression / LightGBM, calibration |
+| `routing/gate2.py` | Post-generation verifier: min logprob over structural clauses | log probabilities, sqlglot token spans, self-consistency |
+| `routing/sweep.py` | Sweep (τ1, τ2), simulate escalation offline, cost vs EX% vs random router, APGR | Pareto curves, offline simulation |
 
 ## Phase 6 — Serving ⬜
 `serving/app.py` (FastAPI), tracing, caching, audit log, `Dockerfile`, `docker-compose.yml`

@@ -2,6 +2,8 @@
 
 A measured, honest build of a Text-to-SQL system, designed as a portfolio project for LLM Application Engineer roles.
 
+**Version 2 (2026-11-08):** merged with the best ideas from `BIRD2.md`: a two-gate router (a pre-generation router plus a post-generation verifier) as the routing design, tuning only on BIRD **train** with dev used only for reporting, a single retry, and extra table columns (p99, cloud escalation %, token compression). BIRD2's heavier ideas (queue-aware thresholds, load testing, matrix-factorization router) are stretch goals. Pacing and honesty rules are unchanged.
+
 ---
 
 ## 1. What it is and what you're trying to achieve
@@ -28,8 +30,9 @@ These are hypotheses, not facts. You don't know any of them yet.
 | H1 | Schema retrieval reduces prompt size and cost without hurting accuracy on large schemas | Compare EX% and tokens vs full-schema baseline; track schema recall |
 | H2 | Guardrails plus execution-feedback retries recover a meaningful share of first-attempt failures | Measure recovery rate |
 | H3 | A self-hosted 7-8B model reaches a useful fraction of frontier accuracy | EX% gap vs baseline |
-| H4 | Confidence routing captures most of the frontier's accuracy at much lower cost | Cost vs accuracy curve |
-| H5 | SFT closes part of the small-model gap; DPO adds more only if SFT plateaus | Before/after EX% on dev |
+| H4 | Confidence routing captures most of the frontier's accuracy at much lower cost | Cost vs accuracy curve, against a random router |
+| H4b | A pre-generation router (Gate 1) cuts p95 latency vs a naive cascade (small model -> retry -> escalate) at similar accuracy and cost | Row "naive cascade" vs row "two-gate"; per-stage latency breakdown |
+| H5 | SFT closes part of the small-model gap and lowers the cloud escalation rate at fixed accuracy; DPO adds more only if SFT plateaus | Before/after EX% and escalation % on dev |
 
 If a hypothesis fails, report it. A well-explained negative result is more credible than a suspiciously perfect table.
 
@@ -38,16 +41,19 @@ If a hypothesis fails, report it. A well-explained negative result is more credi
 ## 3. Architecture
 
 ```
-Question
-  -> Schema retrieval (BM25 + embeddings -> rerank -> FK expansion)
-  -> Prompt builder (pruned DDL + sample values + evidence hint + examples)
-  -> Small model on vLLM generates SQL
-  -> Guardrails (sqlglot: SELECT-only, tables/columns exist, LIMIT)
-  -> Execute (read-only role, statement timeout)
-       |- error  -> error + SQL + schema back to model -> retry (max 2-3)
-       |- result -> confidence check
-              |- high -> return
-              |- low  -> escalate to frontier model -> return
+Question + evidence hint + db_id
+  -> [1] Schema retrieval (BM25 + embeddings -> RRF -> rerank -> FK expansion)
+  -> [2] GATE 1: pre-generation router (reuses retrieval features, ~1ms)
+       |- predicted hard -> frontier model --------------------------------+
+       |- predicted easy -> continue                                       |
+  -> [3] Small model on vLLM generates SQL (prefix caching, logprobs on)   |
+  -> [4] Guardrails (sqlglot: SELECT-only, tables/columns exist, LIMIT)    |
+  -> Execute (read-only, timeout)                                          |
+       |- error  -> error + SQL + schema back to model -> 1 retry          |
+       |            |- still fails -> frontier model ----------------------+
+       |- result -> [5] GATE 2: post-generation verifier (clause logprobs) |
+              |- confident -> return                                       |
+              |- unsure    -> frontier model ------------------------------+
   -> Log: path taken, retries, tokens, latency per stage, cost, SQL
 ```
 
@@ -61,8 +67,11 @@ Question
 Runs a model over BIRD dev, executes predicted and gold SQL, compares result sets. Reports:
 - Execution accuracy (EX%)
 - Valid-SQL rate
-- p50 / p95 latency
+- p50 / p95 / p99 latency, total and per stage (retrieval, gates, generation, retries, escalation)
 - Tokens and cost per 1k queries (API cost plus GPU rental hours)
+- Once routing exists: cloud escalation % (share of questions sent to the frontier model)
+
+**Timeouts:** scoring uses BIRD's official 30s so EX% stays comparable with published numbers. The serving path (Phase 6) can use a tighter production timeout such as 5s; report it separately.
 
 Every other component is judged by this harness.
 
@@ -70,7 +79,9 @@ Every other component is judged by this harness.
 - Index every table and column: name, type, description, a few sample values (sample values teach the model that `status = 'A'` means active).
 - Retrieve with BM25 plus dense embeddings (BGE-class), fuse with reciprocal rank fusion, rerank with a cross-encoder.
 - **Foreign-key expansion:** if `orders` and `customers` are retrieved, also include join keys and bridge tables. Naive pruning breaks here.
-- Measure **schema recall** (were the gold SQL's tables in the retrieved set?) separately from EX%. If recall is 85%, 85% is your ceiling.
+- FK expansion = shortest paths between retrieved tables in the FK graph (a cheap approximation of a Steiner tree; BIRD dev graphs have only 3-14 tables).
+- Measure **schema recall** (were the gold SQL's tables in the retrieved set?) and **token compression** (pruned / full prompt tokens) separately from EX%. If recall is 85%, 85% is your ceiling.
+- Tune K and fusion settings on BIRD **train** (it has gold SQL, so recall is free to compute). Dev is only for the final numbers.
 
 ### 4.2 Generation
 - Prompt = pruned schema (DDL) + sample values + BIRD evidence hint + question + a few examples.
@@ -83,24 +94,32 @@ Parse with sqlglot before anything touches the database:
 - Inject a LIMIT, set a statement timeout
 
 ### 4.4 Self-healing retry loop
-On a parse or execution error, send the error, failed SQL, and schema back to the model. Max 2-3 attempts.
+On a parse or execution error, send the error, failed SQL, and schema back to the model. **Max 1 retry** by default: most typos are fixed on the first retry, and further retries mostly add latency on questions the model fundamentally misread. Measure whether a 2nd retry adds anything before allowing it. In the full pipeline, a failed retry escalates to the frontier model.
 - Metric: recovery rate (fraction of first-attempt failures that end up correct).
 - **Limitation to state openly:** this only fixes queries that raise errors. Wrong-but-executing queries pass straight through, and they are the dominant failure mode.
 
-### 4.5 Confidence routing
-Candidate signals for "should we escalate to the frontier model":
-- Token logprobs (mean / min over the SQL)
-- Retry count
-- **Self-consistency:** sample k queries, execute all, check whether results agree (usually the strongest signal, costs k times the generation)
+### 4.5 Confidence routing: two gates
+**Gate 1, before generation.** Predicts P(small model gets it right) *before* any tokens are generated, so hard questions go straight to the frontier model instead of wasting seconds failing and retrying locally (that waste is what ruins a naive cascade's p95).
+- Features, nearly free because retrieval already computed them: the question embedding, number of tables/columns in the pruned schema, FK join edges, reranker score margin (schema ambiguity), keyword flags (ratios/percentages, nesting, ranking).
+- Labels: run the base small model over BIRD **train** and record correct/incorrect. Never dev.
+- Model: logistic regression or gradient boosting, calibrated. (A matrix-factorization router à la RouteLLM is an optional comparison: it's designed for choosing between model pairs, which is more than we need.)
 
-Procedure: collect signals on dev, measure calibration (does the signal actually predict correctness?), sweep thresholds, produce a cost vs accuracy curve. If logprobs are poorly calibrated, say so and switch signals.
+**Gate 2, after generation.** Catches confident-looking but risky answers that executed fine.
+- Signals: mean token logprob, and the **minimum logprob over structural clauses** (table/column names, JOIN ... ON keys, GROUP BY / HAVING), located with sqlglot.
+- Optional: k=3 self-consistency only inside the uncertain logprob band.
+
+**Procedure.** Calibrate both gates on train, check calibration plots (does the signal predict correctness?), sweep (τ1, τ2), and report on dev against a **random router** and a **naive cascade**, including APGR (share of the small-to-frontier accuracy gap recovered). Escalation sweeps can be simulated offline from saved small-model and frontier predictions, so they cost no extra API calls. If logprobs are poorly calibrated, say so and switch signals.
 
 ### 4.6 Fine-tuning (optional)
 - **SFT with QLoRA** on BIRD train. Never train on dev.
+- Mine the train questions where the base model failed and got escalated (ratios, date formats, 3-table joins) to see what SFT should fix.
+- After SFT, re-calibrate both gates and report how much the **cloud escalation rate** drops at fixed accuracy.
 - **DPO** only if SFT plateaus. Build preference pairs by sampling the model, executing outputs, pairing a correct result (preferred) against an incorrect one (rejected). Expect modest gains and significant effort.
 
 ### 4.7 Serving and observability
 FastAPI service, tracing (Langfuse or OpenTelemetry), per-stage latency, caching, audit log of every generated query, Docker deployment, small demo UI.
+
+**Stretch (after v1):** queue-aware Gate 1 threshold (τ_eff = τ1 + β · GPU queue depth, so bursts spill to the frontier model) demonstrated with a Locust load test; INT8 ONNX embeddings.
 
 ---
 
@@ -120,26 +139,30 @@ FastAPI service, tracing (Langfuse or OpenTelemetry), per-stage latency, caching
 - **Trap:** result-set comparison has edge cases (ordering, duplicates, NULLs, float rounding). Validate the harness by feeding gold SQL as predictions. It must score 100%.
 
 ### Phase 2: Schema retrieval (weeks 3-4)
+- Download BIRD train (tuning set from here on: retrieval K, routers, calibration, SFT).
 - Build index, hybrid retrieval, rerank, FK expansion.
-- Measure schema recall separately from EX%.
+- Measure schema recall and token compression separately from EX%; tune on train, report on dev.
 - **Done when:** ablation of full schema vs pruned shows tokens, cost, schema recall, EX%.
 - **Honest warning:** many BIRD databases are small enough that pruning barely helps. Report that if so, and break results down by schema size.
 
 ### Phase 3: Guardrails and self-healing (weeks 3-4, parallel)
-- sqlglot validation, injected LIMIT, retry loop with error feedback.
+- sqlglot validation, injected LIMIT, retry loop with error feedback (1 retry; measure whether a 2nd helps).
+- Phase 1 finding: Sonnet produced 0 SQL errors on dev, so recovery on the frontier row is expected to be ~0. The retry loop matters for the small model (Phase 4).
 - Metrics: error rate before/after, recovery rate, extra latency.
 - **Done when:** repo is public with README and ablations. **Start applying here.** Don't wait for later phases.
 
 ### Phase 4: Self-hosted small model (weeks 5-6)
 - Serve a 4-bit 7-8B code-capable open model with vLLM on the 12GB GPU.
 - Run the full pipeline. Compare EX%, latency, cost vs baseline, including GPU rental hours.
+- Also run the base model over BIRD train: these results are the labels for Gate 1 and the calibration data for Gate 2.
 - **Done when:** you have the small-model row and know the accuracy gap.
 - Expect the off-the-shelf small model to be well below frontier. That gap is what Phases 5 and 8 address.
 
-### Phase 5: Confidence routing (week 7)
-- Collect signals per query on dev. Measure calibration. Choose thresholds, sweep, plot accuracy vs cost.
-- **Done when:** you can state "at threshold T, N% of traffic goes to the frontier model, retaining X% of its accuracy at Y% of its cost."
-- **Trap:** tuning thresholds and reporting on the same data is overfitting. Hold out part of dev for threshold selection and report on the rest.
+### Phase 5: Two-gate routing (weeks 7-8)
+- Build the naive cascade first (small model -> 1 retry -> Gate 2 -> frontier): its row shows the p95 problem.
+- Train Gate 1 on train labels; calibrate Gate 2 on train. Sweep (τ1, τ2) and plot cost vs accuracy against a random router and the naive cascade.
+- **Done when:** you can state "at thresholds (τ1, τ2), N% of traffic goes to the frontier model, retaining X% of its accuracy at Y% of its cost, with p95 Z ms vs the naive cascade's W ms."
+- **Trap:** tuning thresholds and reporting on the same data is overfitting. Thresholds and router weights come from train only; dev is for reporting.
 
 ### Phase 6: Serving and observability (week 8)
 - FastAPI, tracing, caching, audit log, Docker, demo UI.
@@ -165,14 +188,17 @@ FastAPI service, tracing (Langfuse or OpenTelemetry), per-stage latency, caching
 
 ## 6. Final deliverable table
 
-| Configuration | EX% | Schema recall | p95 latency | Cost / 1k queries |
-|---|---|---|---|---|
-| Frontier, full schema (baseline) | ? | n/a | ? | ? |
-| + schema retrieval | ? | ? | ? | ? |
-| + guardrails and retries | ? | ? | ? | ? |
-| Small model, same pipeline | ? | ? | ? | ? |
-| Small model + routing | ? | ? | ? | ? |
-| + SFT | ? | ? | ? | ? |
+| # | Configuration | EX% | Valid SQL | Schema recall | p50 / p95 latency | Cloud escalation | Cost / 1k queries |
+|---|---|---|---|---|---|---|---|
+| 1 | Frontier, full schema (baseline) | 68.38% | 100% | n/a | 2.08s / 4.46s | 100% | $1.72 |
+| 2 | Frontier + schema retrieval | ? | ? | ? | ? | 100% | ? |
+| 3 | Small model alone (pruned schema) | ? | ? | ? | ? | 0% | ? |
+| 4 | Small model + guardrails + 1 retry | ? | ? | ? | ? | 0% | ? |
+| 5 | Naive cascade (small -> retry -> Gate 2 -> frontier) | ? | ? | ? | ? (high) | ? | ? |
+| 6 | Two-gate (Gate 1 + Gate 2) | ? | ? | ? | ? (lower) | ? | ? |
+| 7 | Two-gate + SFT small model (optional) | ? | ? | ? | ? | ? | ? |
+
+Plots for the README: cost vs EX% curve (two-gate vs random router vs naive cascade, with APGR); p95 latency breakdown by stage, row 5 vs row 6.
 
 Every `?` is the project.
 
@@ -184,6 +210,8 @@ Every `?` is the project.
 - **Serving:** vLLM, FastAPI, Docker
 - **SQL:** sqlglot, SQLite/Postgres, read-only role
 - **Retrieval:** rank_bm25 or similar, FAISS or pgvector
+- **Routing:** scikit-learn / LightGBM (calibrated classifiers)
+- **Load testing (stretch):** Locust
 - **Training (optional):** PEFT / TRL / bitsandbytes
 - **Observability:** Langfuse or OpenTelemetry
 - **Eval:** own harness, results stored as versioned CSV/Parquet so every run is reproducible
@@ -214,8 +242,8 @@ text2sql/
 | 0 | Setup | |
 | 1-2 | Eval harness + baseline | First results row |
 | 3-4 | Retrieval, guardrails, retries | **Public repo, start applying** |
-| 5-7 | Small model + routing | Cost/accuracy curve |
-| 8-9 | Serving + writeup | **Full v1** |
+| 5-8 | Small model + two-gate routing | Cost/accuracy curve, p95 comparison |
+| 9-10 | Serving + writeup | **Full v1** |
 | 10+ | SFT, MIMIC, DPO | Optional extensions |
 
 Hardware: RTX 4080 12GB laptop GPU covers serving a 4-bit 7-8B model and tight QLoRA runs. Rent cloud GPUs by the hour for longer SFT, DPO, and big eval sweeps, and log every rental hour into the cost numbers.
@@ -227,7 +255,7 @@ Hardware: RTX 4080 12GB laptop GPU covers serving a 4-bit 7-8B model and tight Q
 - **Scope creep:** no Phase 8 or 9 work until v1 is shipped.
 - **Unmeasured claims:** nothing goes in the README without a run behind it.
 - **Eval bugs:** validate the harness with gold-as-prediction before trusting any number.
-- **Leakage:** train on train, tune on a held-out slice, report on the rest.
+- **Leakage:** everything that is tuned or trained (retrieval K, router weights, thresholds, SFT) uses BIRD train only. Dev is for reporting. (Exception already on record: the Phase 1 baseline prompt was written once and not tuned on dev.)
 - **Stalling:** if a phase takes more than 2x its estimate, cut scope instead of extending.
 - **Compliance:** don't send MIMIC data to an external API without confirming the terms allow it. Don't use any employer data without checking your contract.
 - **Abandonment:** the most likely failure is quitting at month two because the scope was a fantasy. Ship small phases.
@@ -240,18 +268,18 @@ Hardware: RTX 4080 12GB laptop GPU covers serving a 4-bit 7-8B model and tight Q
 
 **Interview story (fill in the letters after you build it):**
 
-> I treated Text-to-SQL as a reliability and cost problem. Retrieval changed prompt size by X at schema recall Y. Guardrails and retries recovered Z% of failures. A self-hosted model handles N% of traffic and escalates the rest, cutting cost by W% for a V-point accuracy drop. Here is where it still fails and why.
+> I treated Text-to-SQL as a reliability and cost problem. Retrieval changed prompt size by X at schema recall Y. Guardrails and retries recovered Z% of failures. A pre-generation router sent hard questions straight to the frontier model, cutting p95 latency from P to Q vs a naive cascade. A self-hosted model handles N% of traffic and escalates the rest, cutting cost by W% for a V-point accuracy drop. Here is where it still fails and why.
 
 ---
 
 ## 12. Phase checklist
 
-- [ ] Phase 0: repo, env, BIRD loaded, cost logger, PhysioNet request (optional)
-- [ ] Phase 1: harness validated with gold-as-prediction, frontier baseline row, failure taxonomy
-- [ ] Phase 2: hybrid retrieval, FK expansion, schema recall, full-vs-pruned ablation
+- [x] Phase 0: repo, env, BIRD loaded, cost logger
+- [x] Phase 1: harness validated with gold-as-prediction, frontier baseline row (68.38% EX), failure taxonomy
+- [ ] Phase 2: BIRD train, hybrid retrieval, FK expansion, schema recall + compression (tuned on train), full-vs-pruned ablation
 - [ ] Phase 3: sqlglot guardrails, retry loop, recovery rate, public repo, start applying
 - [ ] Phase 4: vLLM small model row, GPU cost included
-- [ ] Phase 5: calibration analysis, held-out threshold selection, cost/accuracy curve
+- [ ] Phase 5: naive cascade row, Gate 1 + Gate 2 trained/calibrated on train, cost/accuracy curve vs random router, p95 comparison
 - [ ] Phase 6: FastAPI, tracing, caching, audit log, Docker
 - [ ] Phase 7: README, failure analysis, limitations, write-up sent out
 - [ ] Phase 8 (optional): SFT, then DPO only if SFT plateaus
@@ -261,4 +289,4 @@ Hardware: RTX 4080 12GB laptop GPU covers serving a 4-bit 7-8B model and tight Q
 
 ## Next action
 
-Download BIRD dev and run the frontier baseline with a full-schema prompt. Record EX%, latency, and cost per 1k queries. Nothing else matters until that first number exists.
+Phase 2: download BIRD train, then build `retrieval/schema.py` and `eval/schema_recall.py`. Measure recall on train before spending any API credit.
