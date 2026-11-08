@@ -1,8 +1,9 @@
-"""Run a model on BIRD dev: generate SQL -> execute -> compare with gold -> save results.
+"""Run a model on BIRD: (retrieve schema) -> generate SQL -> execute -> compare with gold -> save.
 
 Examples:
   uv run python -m eval.run --model claude-haiku-5-5 --limit 20        # cheap test
   uv run python -m eval.run --model claude-sonnet-5-5 --max-cost 5     # full dev, stops at $5
+  uv run python -m eval.run --schema pruned --k 10 --granularity table # Phase 2: retrieved schema
   uv run python -m eval.run --rescore results/<run>.csv                # re-execute saved SQL, no API calls
 
 Outputs (run name = model_effort_timestamp unless --name is given):
@@ -20,18 +21,21 @@ from pathlib import Path
 
 import pandas as pd
 
-from eval.compare import results_match
-from eval.data import Example, load_dev
+from eval.compare import matches
+from eval.data import Example, load_split
 from eval.executor import execute
 from eval.gold_cache import load_gold
+from eval.gold_columns import used_columns
 from eval.metrics import by_difficulty, format_summary, summarize
 from generation.claude_client import generate_sql
-from generation.prompt import build_prompt
+from generation.prompt import build_prompt, schema_ddl
+from retrieval.pipeline import METHODS, RetrievalConfig, retrieve
+from retrieval.schema import load_schemas
 
 RESULTS = Path(__file__).resolve().parent.parent / "results"
 
 
-def score_sql(ex: Example, sql: str, gold_rows: list[tuple]) -> dict:
+def score_sql(ex: Example, sql: str, gold_rows) -> dict:
     """Execute predicted SQL and compare with gold. Shared by normal runs and --rescore."""
     if not sql:  # generation failed: nothing to run
         return {"exec_ok": False, "exec_error": "no SQL generated", "exec_seconds": 0.0, "correct": False}
@@ -40,15 +44,40 @@ def score_sql(ex: Example, sql: str, gold_rows: list[tuple]) -> dict:
         "exec_ok": r.ok,
         "exec_error": r.error,
         "exec_seconds": r.seconds,
-        "correct": r.ok and results_match(r.rows, gold_rows),
+        "correct": r.ok and matches(r.rows, gold_rows),  # gold = rows (dev) or Fingerprint (train)
     }
 
 
-def run_one(ex: Example, gold_rows: list[tuple], model: str, effort: str) -> tuple[dict, dict]:
-    """Everything for one question. Returns (row for the CSV, raw record for the JSONL)."""
-    system, user = build_prompt(ex)
+def retrieve_schema(ex: Example, cfg: RetrievalConfig) -> tuple[str, dict]:
+    """Phase 2 step: pruned DDL for this question + the retrieval stats we log per question."""
+    start = time.perf_counter()
+    r = retrieve(ex, cfg)
+    seconds = time.perf_counter() - start
+    gold = used_columns(ex.gold_sql, load_schemas(ex.split)[ex.db_id])  # None if unparseable
+    stats = {
+        "retrieval_seconds": seconds,
+        "kept_tables": len(r.tables),
+        "kept_columns": len(r.keep),
+        "schema_chars": len(r.ddl),
+        "compression": len(r.ddl) / len(schema_ddl(ex.db_path)),  # vs. what the full-schema run sent
+        "schema_recall_ok": gold is not None and gold[1] <= r.keep,
+    }
+    return r.ddl, stats
+
+
+def run_one(ex: Example, gold_rows: list[tuple], model: str, effort: str,
+            cfg: RetrievalConfig | None = None) -> tuple[dict, dict]:
+    """Everything for one question. Returns (row for the CSV, raw record for the JSONL).
+
+    cfg=None -> full schema (Phase 1). Otherwise the schema is retrieved first (Phase 2).
+    """
+    schema_text, stats = retrieve_schema(ex, cfg) if cfg else (None, {})
+    system, user = build_prompt(ex, schema_text)
+    # Caching stays on for pruned schemas too: many questions on one database keep the same tables,
+    # so the same system prompt repeats (dev: 253 distinct pruned prompts for 1,534 questions).
     g = generate_sql(system, user, model=model, effort=effort)
     scored = score_sql(ex, g.sql, gold_rows)
+    retrieval_s = stats.get("retrieval_seconds", 0.0)
 
     row = {
         "question_id": ex.question_id,
@@ -67,17 +96,24 @@ def run_one(ex: Example, gold_rows: list[tuple], model: str, effort: str) -> tup
         "cost_usd": g.cost_usd,
         "gen_seconds": g.seconds,
         "exec_seconds": scored["exec_seconds"],
-        "total_seconds": g.seconds + scored["exec_seconds"],
+        "total_seconds": retrieval_s + g.seconds + scored["exec_seconds"],
+        **stats,
     }
     raw = {"question_id": ex.question_id, "system": system, "user": user, **asdict(g)}
     return row, raw
 
 
-def run(model: str, effort: str, limit: int | None, workers: int, max_cost: float, name: str | None) -> None:
-    examples = load_dev(limit=limit)
-    gold = load_gold()
-    run_name = name or f"{model}_{effort}_{datetime.now():%Y%m%d-%H%M%S}"
+def run(model: str, effort: str, limit: int | None, workers: int, max_cost: float, name: str | None,
+        split: str = "dev", cfg: RetrievalConfig | None = None) -> None:
+    gold = load_gold(split)
+    # train has a few broken gold queries (stored as None): they can't be scored, so skip them
+    examples = [ex for ex in load_split(split, limit) if gold[ex.question_id] is not None]
+    schema_tag = "full" if cfg is None else f"{cfg.method}-{cfg.granularity}-k{cfg.top_k}"
+    run_name = name or f"{model}_{effort}_{split}_{schema_tag}_{datetime.now():%Y%m%d-%H%M%S}"
     print(f"run {run_name}: {len(examples)} questions, {workers} workers, stop at ${max_cost:.2f}")
+    if cfg:  # load retrieval data once, before the threads start (otherwise each thread loads it)
+        load_schemas(split)
+        retrieve(examples[0], cfg)
 
     rows, raws, spent, stopped_early = [], [], 0.0, False
     start = time.perf_counter()
@@ -85,7 +121,7 @@ def run(model: str, effort: str, limit: int | None, workers: int, max_cost: floa
     # API calls spend most of their time waiting on the network, so threads let several
     # questions be in flight at once. Each thread opens its own SQLite connection.
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = [pool.submit(run_one, ex, gold[ex.question_id], model, effort) for ex in examples]
+        futures = [pool.submit(run_one, ex, gold[ex.question_id], model, effort, cfg) for ex in examples]
         for i, fut in enumerate(as_completed(futures), 1):  # as_completed: in finishing order
             row, raw = fut.result()
             rows.append(row)
@@ -101,17 +137,19 @@ def run(model: str, effort: str, limit: int | None, workers: int, max_cost: floa
                 break
 
     df = pd.DataFrame(rows).sort_values("question_id").reset_index(drop=True)
-    settings = {"model": model, "effort": effort, "limit": limit, "workers": workers,
+    settings = {"model": model, "effort": effort, "split": split, "limit": limit, "workers": workers,
                 "stopped_early": stopped_early, "wall_seconds": time.perf_counter() - start,
-                "prompt": "full schema DDL + evidence + question"}
+                "prompt": "full schema DDL + evidence + question" if cfg is None else
+                          "retrieved (pruned) schema DDL + evidence + question",
+                "retrieval": asdict(cfg) if cfg else None}
     save(run_name, df, settings, raws)
 
 
-def rescore(csv_path: Path) -> None:
+def rescore(csv_path: Path, split: str = "dev") -> None:
     """Re-execute the saved predicted SQL (no API calls). Should reproduce the same EX%."""
     df = pd.read_csv(csv_path, keep_default_na=False, na_values=[""])
-    gold = load_gold()
-    examples = {ex.question_id: ex for ex in load_dev()}
+    gold = load_gold(split)
+    examples = {ex.question_id: ex for ex in load_split(split)}
     saved_correct = df["correct"].copy()
 
     for i, row in df.iterrows():
@@ -152,12 +190,23 @@ def main() -> None:
     p.add_argument("--max-cost", type=float, default=1.0, help="stop once this many $ are spent")
     p.add_argument("--name", default=None, help="run name (default: model_effort_timestamp)")
     p.add_argument("--rescore", type=Path, default=None, help="re-execute SQL from a saved results CSV")
+    p.add_argument("--split", default="dev", choices=["dev", "train"])
+    # Phase 2: schema retrieval (defaults = the setting chosen on train, see notes/phase2-retrieval.md)
+    p.add_argument("--schema", default="full", choices=["full", "pruned"])
+    p.add_argument("--method", default=RetrievalConfig.method, choices=METHODS)
+    p.add_argument("--no-exact", action="store_true", help="turn off the exact name/value boost")
+    p.add_argument("--k", type=int, default=RetrievalConfig.top_k, help="columns taken from the ranking")
+    p.add_argument("--granularity", default=RetrievalConfig.granularity, choices=["table", "column"])
+    p.add_argument("--descriptions", action="store_true", help="add column descriptions + sample values")
     args = p.parse_args()
 
     if args.rescore:
-        rescore(args.rescore)
-    else:
-        run(args.model, args.effort, args.limit, args.workers, args.max_cost, args.name)
+        rescore(args.rescore, args.split)
+        return
+    cfg = None if args.schema == "full" else RetrievalConfig(
+        method=args.method, exact=not args.no_exact, top_k=args.k,
+        granularity=args.granularity, descriptions=args.descriptions)
+    run(args.model, args.effort, args.limit, args.workers, args.max_cost, args.name, args.split, cfg)
 
 
 if __name__ == "__main__":

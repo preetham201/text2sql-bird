@@ -26,12 +26,17 @@ def summarize(df: pd.DataFrame) -> dict:
         "output_tokens_mean": df["output_tokens"].mean(),
         "total_cost_usd": total_cost,
         "cost_per_1k_usd": 1000 * total_cost / n,
+        # Phase 2 columns (only in runs that used retrieval)
+        **({"schema_recall_pct": 100 * df["schema_recall_ok"].mean(),
+            "compression_mean": df["compression"].mean(),
+            "retrieval_p50_s": df["retrieval_seconds"].quantile(0.50)}
+           if "compression" in df.columns else {}),
     }
 
 
 def by_difficulty(df: pd.DataFrame) -> pd.DataFrame:
     """EX% and counts split into simple / moderate / challenging."""
-    order = ["simple", "moderate", "challenging"]
+    order = ["simple", "moderate", "challenging", "unknown"]  # train has no difficulty labels
     table = df.groupby("difficulty").agg(
         n=("correct", "size"),
         ex_pct=("correct", lambda s: 100 * s.mean()),
@@ -46,7 +51,9 @@ def format_summary(s: dict) -> str:
             f"latency p50 {s['latency_p50_s']:.2f}s  p95 {s['latency_p95_s']:.2f}s\n"
             f"tokens/question: {s['prompt_tokens_mean']:.0f} in ({s['cache_read_pct']:.0f}% read from cache),"
             f" {s['output_tokens_mean']:.0f} out\n"
-            f"cost: ${s['total_cost_usd']:.4f} total  ->  ${s['cost_per_1k_usd']:.3f} per 1k questions")
+            f"cost: ${s['total_cost_usd']:.4f} total  ->  ${s['cost_per_1k_usd']:.3f} per 1k questions"
+            + (f"\nschema: recall {s['schema_recall_pct']:.1f}%, size {100 * s['compression_mean']:.0f}% of full,"
+               f" retrieval p50 {1000 * s['retrieval_p50_s']:.0f}ms" if "compression_mean" in s else ""))
 
 
 if __name__ == "__main__":

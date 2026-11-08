@@ -42,6 +42,35 @@ def execute(db_path: Path, sql: str, timeout_s: float = DEFAULT_TIMEOUT_S) -> Ex
         con.close()
 
 
+def execute_fingerprint(db_path: Path, sql: str, timeout_s: float = DEFAULT_TIMEOUT_S):
+    """Like execute(), but streams rows into a Fingerprint instead of keeping them.
+
+    Returns (Fingerprint or None, error or None, seconds). Peak memory stays small even for a
+    query returning millions of rows, because rows are read 10,000 at a time and then dropped.
+    """
+    from eval.compare import fingerprint
+
+    start = time.perf_counter()
+    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    deadline = start + timeout_s
+    con.set_progress_handler(lambda: int(time.perf_counter() > deadline), 10_000)
+
+    def stream(cursor):
+        while batch := cursor.fetchmany(10_000):
+            yield from batch
+
+    try:
+        fp = fingerprint(stream(con.execute(sql)))
+        return fp, None, time.perf_counter() - start
+    except sqlite3.OperationalError as e:
+        msg = f"timeout after {timeout_s}s" if "interrupted" in str(e) else str(e)
+        return None, msg, time.perf_counter() - start
+    except Exception as e:
+        return None, f"{type(e).__name__}: {e}", time.perf_counter() - start
+    finally:
+        con.close()
+
+
 if __name__ == "__main__":
     # Self-check: `uv run python -m eval.executor`
     from eval.data import load_dev

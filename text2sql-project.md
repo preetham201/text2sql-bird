@@ -191,7 +191,7 @@ FastAPI service, tracing (Langfuse or OpenTelemetry), per-stage latency, caching
 | # | Configuration | EX% | Valid SQL | Schema recall | p50 / p95 latency | Cloud escalation | Cost / 1k queries |
 |---|---|---|---|---|---|---|---|
 | 1 | Frontier, full schema (baseline) | 68.38% | 100% | n/a | 2.08s / 4.46s | 100% | $1.72 |
-| 2 | Frontier + schema retrieval | ? | ? | ? | ? | 100% | ? |
+| 2 | Frontier + schema retrieval | ? | ? | 98.6% | ? | 100% | ? (est. ~$2.2) |
 | 3 | Small model alone (pruned schema) | ? | ? | ? | ? | 0% | ? |
 | 4 | Small model + guardrails + 1 retry | ? | ? | ? | ? | 0% | ? |
 | 5 | Naive cascade (small -> retry -> Gate 2 -> frontier) | ? | ? | ? | ? (high) | ? | ? |
@@ -276,7 +276,7 @@ Hardware: RTX 4080 12GB laptop GPU covers serving a 4-bit 7-8B model and tight Q
 
 - [x] Phase 0: repo, env, BIRD loaded, cost logger
 - [x] Phase 1: harness validated with gold-as-prediction, frontier baseline row (68.38% EX), failure taxonomy
-- [ ] Phase 2: BIRD train, hybrid retrieval, FK expansion, schema recall + compression (tuned on train), full-vs-pruned ablation
+- [~] Phase 2 (built; row 2 paid run pending): BIRD train, hybrid retrieval, FK expansion, schema recall + compression (tuned on train), full-vs-pruned ablation
 - [ ] Phase 3: sqlglot guardrails, retry loop, recovery rate, public repo, start applying
 - [ ] Phase 4: vLLM small model row, GPU cost included
 - [ ] Phase 5: naive cascade row, Gate 1 + Gate 2 trained/calibrated on train, cost/accuracy curve vs random router, p95 comparison
@@ -289,4 +289,4 @@ Hardware: RTX 4080 12GB laptop GPU covers serving a 4-bit 7-8B model and tight Q
 
 ## Next action
 
-Phase 2: download BIRD train, then build `retrieval/schema.py` and `eval/schema_recall.py`. Measure recall on train before spending any API credit.
+Phase 2 is built and tuned (recall 98.6% on dev, `notes/phase2-retrieval.md`). Next: approve the row 2 paid run (~$3.4 on Sonnet), then Phase 3: `guardrails/validate.py` (sqlglot checks) and `guardrails/retry.py` (max 1 retry).

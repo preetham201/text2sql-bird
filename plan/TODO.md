@@ -19,7 +19,7 @@ Each phase lists **You'll learn** — the concepts to understand well enough to 
 - [x] Python env + dependency file
 - [ ] Repo layout: `eval/ retrieval/ generation/ guardrails/ routing/ serving/ training/ results/`
 - [x] Download BIRD dev (questions JSON + SQLite DBs + `database_description/` CSVs) → `data/bird/dev/`
-- [ ] Download BIRD train → `data/bird/train/` (moved to Phase 2)
+- [x] Download BIRD train → `data/bird/train/` (moved to Phase 2)
 - [x] Explore: open a dev DB, list tables, read 3 questions + their gold SQL + evidence
 - [x] Frontier model chosen, API key in `.env`
 - [x] Cost-logging utility (tokens in/out → $)
@@ -58,21 +58,23 @@ Each phase lists **You'll learn** — the concepts to understand well enough to 
 ## Phase 2 — Schema retrieval (weeks 3–4)
 **You'll learn:** BM25 (keyword search), dense embeddings, reciprocal rank fusion, cross-encoder reranking, recall as a ceiling on accuracy, FK graphs.
 
-- [ ] Download BIRD train → `data/bird/train/`; loader supports `split="train"`
-- [ ] Gold results cache for train (needed for router labels later)
-- [ ] Extract per DB: tables, columns, types, FKs
-- [ ] Enrich: column descriptions + 3–5 sample values per column
-- [ ] BM25 index
-- [ ] Dense index (BGE embeddings, FAISS)
-- [ ] Fuse with RRF
-- [ ] Cross-encoder rerank of top-K
-- [ ] FK expansion: join keys + bridge tables
-- [ ] Schema recall metric (gold tables/columns via sqlglot ⊆ retrieved?) + token compression ratio
-- [ ] Tune K vs recall **on train**; confirm on dev
-- [ ] Results broken down by schema size (small DBs may not benefit — report it)
+- [x] Download BIRD train → `data/bird/train/`; loader supports `split="train"`
+- [x] Gold results cache for train (needed for router labels later)
+- [x] Extract per DB: tables, columns, types, FKs
+- [x] Enrich: column descriptions + 3–5 sample values per column
+- [x] BM25 index
+- [x] Dense index (BGE embeddings, FAISS)
+- [x] Fuse with RRF
+- [x] Cross-encoder rerank of top-K
+- [x] FK expansion: join keys + bridge tables
+- [x] Schema recall metric (gold tables/columns via sqlglot ⊆ retrieved?) + token compression ratio
+- [x] Tune K vs recall **on train**; confirm on dev
+- [x] Results broken down by schema size (small DBs may not benefit — report it)
 - [ ] Rerun frontier with pruned schema on dev → **row 2**
 
 **Done when:** full-vs-pruned ablation shows tokens, compression, cost, schema recall, EX%.
+
+✅ **Built (2026-11-08):** hybrid + exact name/value boost, table, K=20: recall 97.5% train / 98.6% dev, schema 83% / 88% of full; dense via numpy (no FAISS needed); reranker measured (+0.8) and left off; inferred FK links added; train gold cache = streamed fingerprints (OOM fix, see notes/failures-log.md). Remaining: row 2 paid run (~$3.4) awaiting approval. Notes: `notes/phase2-retrieval.md`.
 
 ---
 

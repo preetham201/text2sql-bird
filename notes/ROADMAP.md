@@ -70,49 +70,43 @@ Notes: [phase1-eval-harness.md](phase1-eval-harness.md) · model choice: [phase1
 
 ---
 
-## Phase 2 — Schema retrieval ⬜
-Notes: `phase2-retrieval.md` (written as we build)
+## Phase 2 — Schema retrieval ✅ (row 2 paid run pending approval)
+Notes: **`phase2-retrieval.md`**: full end-to-end explanation, results, decisions, ⭐ code to study.
+Failures + fixes (all phases): **`failures-log.md`** (incl. the OOM crash during the train gold cache and how it was fixed).
 
 **Question it answers (H1):** can we send the model only the relevant part of the schema, cutting tokens and cost, without losing accuracy?
-**Done when:** a full-vs-pruned ablation shows tokens, compression, cost, schema recall and EX%, broken down by schema size.
+**Result so far (free, offline):** hybrid (BM25 + BGE, RRF) + exact name/value boost, table granularity, K=20, FK expansion:
+**97.5% column recall on train → 98.6% on dev**, schema text at 83% / 88% of full. Large schemas (>150 cols): 42% of full at 93% recall.
+Counter-intuitive finding: with prompt caching, pruning should make Sonnet ~27% *more* expensive on dev (est. $3.36 vs $2.64).
 
-**Plan v2 (merged with BIRD2):** all tuning happens on **BIRD train** (9,428 questions, 69 databases, gold SQL included). Dev is only for the final numbers.
+**Files built (in dependency order)**
 
-**What Phase 1 already tells us (set expectations honestly)**
-- BIRD dev schemas are small: 3–14 tables, about 300–2,000 tokens. The full prompt is ~1,700 tokens and 94% of it is already served from cache. So the **cost saving on Sonnet will be small**. Report it anyway; the bigger payoff is Phase 4, where a 7B model's accuracy suffers from long, noisy prompts.
-- Only ~8% of labelled failures were wrong_table, so retrieval is unlikely to add much accuracy. Its first job is to **not lose** a table or column the query needs. That's why **schema recall** is the key metric: if recall is 95%, ~95% is the ceiling.
-- **Most of Phase 2 costs nothing:** schema recall is computed offline from gold SQL, with no API calls. Only the final ablation run spends credit (~$2.6 per full-dev Sonnet run; ~$6.7 left).
+| # | File | What it does | Study level |
+|---|---|---|---|
+| 1 | `eval/data.py` (extended) | `load_split("train"/"dev")` | ⭐ |
+| 2 | `retrieval/schema.py` | Per DB: columns, types, PK/FK (PRAGMA), descriptions (mixed-encoding CSVs), sample values; `original_ddl` / `render_ddl` | ⭐ `Column.key`, `original_ddl` |
+| 3 | `eval/gold_columns.py` | sqlglot parse + `qualify` → tables/columns the gold SQL uses (dev 100%, train 98% parse) | ⭐ |
+| 4 | `retrieval/text.py` | column → searchable text, identifier splitting, tokenizer | skim |
+| 5 | `retrieval/bm25.py` | keyword ranking per DB | idea |
+| 6 | `retrieval/dense.py` | BGE embeddings + cosine (no FAISS: ≤455 vectors per DB) | idea |
+| 7 | `retrieval/fusion.py` | RRF (k=60) + optional cross-encoder rerank | ⭐ `rrf()` |
+| 8 | `retrieval/exact.py` | column-name mentions + cell-value matches (4.9M-value index) → top of ranking | idea |
+| 9 | `retrieval/fk_expand.py` | FK graph + inferred links, BFS shortest paths, join columns | ⭐ idea of `connect_tables` |
+| 10 | `retrieval/pipeline.py` | `RetrievalConfig`, rank → exact → select → render | ⭐ whole file |
+| 11 | `eval/schema_recall.py` | offline sweep: recall, compression, by schema size | ⭐ metric part |
+| 12 | `generation/prompt.py`, `claude_client.py`, `eval/run.py`, `metrics.py`, `gold_cache.py`, `compare.py`, `executor.py` (extended) | `--schema pruned`, `--split`, retrieval stats per question, train gold cache as streamed fingerprints | ⭐ new `run_one`, `fingerprint()` |
 
-**Build order** (each file depends only on files above it)
+**Experiments done:** train sweep (4 methods × exact on/off × K × granularity), reranker on a 2k sample, by-size breakdown,
+dev confirmation, cost estimate with/without caching, Haiku 20-question smoke test (<1 cent).
+**Remaining:** row 2 on dev with Sonnet (~$3.4, needs approval).
 
-| # | File | What it does | Concepts to know first | Depends on | Status |
-|---|---|---|---|---|---|
-| 1 | `eval/data.py` (extend) + BIRD train download | `load_split("train" or "dev")`; train databases live in `data/bird/train/`. Train = where we tune; dev = where we report | train/dev/test roles, why tuning on the test set is cheating, default arguments | — | 🔨 downloading |
-| 2 | `retrieval/schema.py` | Per DB: tables, columns, types, PK/FKs (`PRAGMA table_info` / `foreign_key_list`), column descriptions from `database_description/*.csv`, 3–5 sample values per column | SQLite `PRAGMA`, `csv`/pandas reading, dataclasses for structured data | data | ⬜ |
-| 3 | `eval/schema_recall.py` | Parse gold SQL with sqlglot → the tables/columns it uses; recall = share of those that retrieval kept | ASTs (a tree view of SQL), sqlglot `parse_one`, `find_all`, aliases (`T1`) | schema | ⬜ |
-| 4 | `retrieval/bm25.py` | Keyword search: question → ranked columns | tokenization, TF-IDF intuition, BM25 (`rank_bm25`) | schema | ⬜ |
-| 5 | `retrieval/dense.py` | Embedding search: question → ranked columns | embeddings, cosine similarity, BGE models (`sentence-transformers`), FAISS index, GPU vs CPU | schema | ⬜ |
-| 6 | `retrieval/fusion.py` | Merge BM25 + dense rankings with RRF, then rerank the top-K with a cross-encoder | reciprocal rank fusion (`1 / (k + rank)`), bi-encoder vs cross-encoder | bm25, dense | ⬜ |
-| 7 | `retrieval/fk_expand.py` | Add join keys and bridge tables so the kept tables can actually be joined | graphs, FK edges, shortest paths (BFS) | schema | ⬜ |
-| 8 | `retrieval/pipeline.py` | question → pruned schema DDL (+ descriptions/sample values) | composing the steps, config objects | 4–7 | ⬜ |
-| 9 | `generation/prompt.py` (extend) | Option to build the prompt from the pruned schema | keeping old behaviour as the default | pipeline | ⬜ |
-| 10 | `eval/run.py` (extend) | `--schema full|pruned`, `--split dev|train`, recall + compression + schema size in results | — | all above | ⬜ |
-
-**Experiments, in order**
-1. **Recall on train (free):** each retriever's schema recall and token compression at several K. Pick K and the fusion setup here.
-2. **Recall on dev (free):** confirm the chosen setup holds on dev (different databases, so it's a real generalisation test).
-3. **Ablation (paid, dev):** row 2 = pruned schema, same DDL format, compared with row 1 on the same 1,534 questions. Only one thing changes.
-   - row 2b: pruned schema + descriptions + sample values, only if budget allows.
-4. Break results down by schema size (number of tables/columns per DB).
-
-**New dependencies:** `rank-bm25`, `sentence-transformers`, `faiss-cpu` (the GPU isn't needed at this scale: a few hundred columns).
-
-**Check yourself (answer after building)**
+**Check yourself**
 - Why is schema recall a ceiling on EX%?
-- Why does BM25 find `CDSCode` when dense search might not, and the reverse for "pupils" → `Enrollment`?
+- Why did BM25 beat dense here, and what closed the gap?
 - What does RRF do that averaging the two scores doesn't?
-- Why can pruning to the top-K columns break a query even when every needed column is retrieved? (Hint: joins.)
-- Why do we choose K on train and report on dev? What would go wrong if we picked K on dev?
+- Why can pruning break a query even when every needed column is retrieved? (joins → FK expansion; BIRD FKs incomplete)
+- Why do we choose K on train and report on dev?
+- The prompt got smaller but the cost went up. Why?
 
 ---
 

@@ -37,9 +37,18 @@ def extract_sql(text: str) -> str:
     return sql.strip().rstrip(";").strip()
 
 
-def generate_sql(system: str, user: str, model: str, effort: str, max_tokens: int = 16000) -> Generation:
-    """Ask `model` for SQL. Never raises: API failures come back as a Generation with an error."""
+def generate_sql(system: str, user: str, model: str, effort: str, max_tokens: int = 16000,
+                 cache: bool = True) -> Generation:
+    """Ask `model` for SQL. Never raises: API failures come back as a Generation with an error.
+
+    cache=False for a system prompt that will never repeat: a cache write costs 1.25x the input
+    price, so caching a prefix that's never reused costs more. (Phase 2's pruned prompts DO repeat
+    often enough, so eval/run.py keeps caching on; the switch is here for later phases.)
+    """
     start = time.perf_counter()
+    system_block = {"type": "text", "text": system}
+    if cache:
+        system_block["cache_control"] = {"type": "ephemeral"}
     try:
         response = _client.messages.create(
             model=model,
@@ -47,7 +56,7 @@ def generate_sql(system: str, user: str, model: str, effort: str, max_tokens: in
             # Prompt caching: the system prompt (instructions + schema) is the same for every
             # question on one database. Marking it lets the API reuse it for ~10% of the input
             # price on later calls (within 5 minutes). It changes cost only, never the answer.
-            system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+            system=[system_block],
             messages=[{"role": "user", "content": user}],
             # effort controls how much the model thinks before answering (and so the cost).
             # We set it explicitly so a run is reproducible even if the API default changes.
