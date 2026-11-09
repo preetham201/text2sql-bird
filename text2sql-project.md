@@ -191,12 +191,14 @@ FastAPI service, tracing (Langfuse or OpenTelemetry), per-stage latency, caching
 | # | Configuration | EX% | Valid SQL | Schema recall | p50 / p95 latency | Cloud escalation | Cost / 1k queries |
 |---|---|---|---|---|---|---|---|
 | 1 | Frontier, full schema (baseline) | 68.38% | 100% | n/a | 2.08s / 4.46s | 100% | $1.72 |
-| 2 | Frontier + schema retrieval | ? | ? | 98.6% | ? | 100% | ? (est. ~$2.2) |
+| 2 | Frontier + schema retrieval | 68.45% | 100% | 98.6% | 1.72s / 3.05s* | 100% | $2.20 |
 | 3 | Small model alone (pruned schema) | ? | ? | ? | ? | 0% | ? |
 | 4 | Small model + guardrails + 1 retry | ? | ? | ? | ? | 0% | ? |
 | 5 | Naive cascade (small -> retry -> Gate 2 -> frontier) | ? | ? | ? | ? (high) | ? | ? |
 | 6 | Two-gate (Gate 1 + Gate 2) | ? | ? | ? | ? (lower) | ? | ? |
 | 7 | Two-gate + SFT small model (optional) | ? | ? | ? | ? | ? | ? |
+
+*Row 2 latency: the API was ~20% faster that day even for byte-identical prompts, so the latency gap vs row 1 is not attributed to pruning (see notes/phase2-retrieval.md §6.5).
 
 Plots for the README: cost vs EX% curve (two-gate vs random router vs naive cascade, with APGR); p95 latency breakdown by stage, row 5 vs row 6.
 
@@ -276,7 +278,7 @@ Hardware: RTX 4080 12GB laptop GPU covers serving a 4-bit 7-8B model and tight Q
 
 - [x] Phase 0: repo, env, BIRD loaded, cost logger
 - [x] Phase 1: harness validated with gold-as-prediction, frontier baseline row (68.38% EX), failure taxonomy
-- [~] Phase 2 (built; row 2 paid run pending): BIRD train, hybrid retrieval, FK expansion, schema recall + compression (tuned on train), full-vs-pruned ablation
+- [x] Phase 2: BIRD train, hybrid retrieval, FK expansion, schema recall + compression (tuned on train), full-vs-pruned ablation
 - [ ] Phase 3: sqlglot guardrails, retry loop, recovery rate, public repo, start applying
 - [ ] Phase 4: vLLM small model row, GPU cost included
 - [ ] Phase 5: naive cascade row, Gate 1 + Gate 2 trained/calibrated on train, cost/accuracy curve vs random router, p95 comparison
@@ -289,4 +291,4 @@ Hardware: RTX 4080 12GB laptop GPU covers serving a 4-bit 7-8B model and tight Q
 
 ## Next action
 
-Phase 2 is built and tuned (recall 98.6% on dev, `notes/phase2-retrieval.md`). Next: approve the row 2 paid run (~$3.4 on Sonnet), then Phase 3: `guardrails/validate.py` (sqlglot checks) and `guardrails/retry.py` (max 1 retry).
+Phase 2 done (row 2: 68.45% EX, same as row 1; +28% cost on Sonnet from lost cache reuse; `notes/phase2-retrieval.md`). Next: Phase 3: `guardrails/validate.py` (sqlglot checks) and `guardrails/retry.py` (max 1 retry).

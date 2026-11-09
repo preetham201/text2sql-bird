@@ -70,7 +70,7 @@ Notes: [phase1-eval-harness.md](phase1-eval-harness.md) · model choice: [phase1
 
 ---
 
-## Phase 2 — Schema retrieval ✅ (row 2 paid run pending approval)
+## Phase 2 — Schema retrieval ✅
 Notes: **`phase2-retrieval.md`**: full end-to-end explanation, results, decisions, ⭐ code to study.
 Failures + fixes (all phases): **`failures-log.md`** (incl. the OOM crash during the train gold cache and how it was fixed).
 
@@ -98,7 +98,7 @@ Counter-intuitive finding: with prompt caching, pruning should make Sonnet ~27% 
 
 **Experiments done:** train sweep (4 methods × exact on/off × K × granularity), reranker on a 2k sample, by-size breakdown,
 dev confirmation, cost estimate with/without caching, Haiku 20-question smoke test (<1 cent).
-**Remaining:** row 2 on dev with Sonnet (~$3.4, needs approval).
+**Row 2 (paid, full dev):** 68.45% EX vs row 1 68.38% (McNemar p = 1.00), prompt tokens −14%, cost +28% ($3.37), noise floor 3.2% flips measured on 502 identical-prompt questions.
 
 **Check yourself**
 - Why is schema recall a ceiling on EX%?

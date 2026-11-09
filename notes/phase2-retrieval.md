@@ -1,4 +1,4 @@
-# Phase 2 — Schema retrieval (end-to-end notes)
+# Phase 2 — Schema retrieval (end-to-end notes) ✅
 
 > Read this top to bottom once. After it you should be able to explain **what Phase 2 is, why it
 > exists, how it works, what we found, and how it connects to Phase 1 and Phase 3**.
@@ -19,7 +19,7 @@ the gold SQL uses?) **offline, for $0**, by parsing the gold SQL with sqlglot. W
 **train** (9,242 questions) and confirmed on **dev**. Result: **98.6% recall on dev with the schema
 text at 88% of full size**. On small schemas pruning barely helps; on large ones (>150 columns) it
 cuts the schema to ~42% at 93% recall. Because Phase 1 already caches the full schema, pruning
-is expected to make the Sonnet run slightly *more* expensive (~$3.4 vs $2.64). The real payoff comes in Phase 4
+made the Sonnet run *more* expensive ($3.37 vs $2.64) at the **same accuracy (68.45% vs 68.38%)**. The real payoff comes in Phase 4
 (small local model, short context) and on large schemas.
 
 ---
@@ -44,6 +44,9 @@ exist?". With a pruned schema, it can also check "...that exist **in what we sho
 If the model references a column we pruned away, that's a retrieval miss, and the retry can add it
 back. Phase 3 also needs to know *why* queries fail; Phase 2's recall numbers tell us how many
 failures could be retrieval's fault (at most ~1.4% of dev questions).
+
+**Measured answer (row 2):** EX 68.45% vs 68.38% (no difference, McNemar p = 1.00), 14% fewer prompt tokens, 28% higher cost
+on Sonnet because pruning reduces prompt-cache reuse. Details in §6.5.
 
 **What Phase 2 hands to Phase 4/5:** BIRD train is now downloaded and loadable, with a **train gold-results
 cache** (needed to label which questions a small model gets right → router training data in Phase 5).
@@ -471,16 +474,55 @@ it halves row 2's cost. Lesson: **measure the assumption before building on it.*
 (self-hosted models, Phase 4); (c) short-context or small models, where long noisy prompts hurt accuracy;
 (d) latency: fewer input tokens = faster time-to-first-token.
 
-### 6.5 Row 2 (paid): status
+### 6.5 Row 2: the paid ablation (full dev, Sonnet 5.5, effort low, 2026-11-09)
 
-Not run yet: needs your approval (~$3.4 for full dev on Sonnet, caching on). Command:
-```
-uv run python -m eval.run --model claude-sonnet-5-5 --effort low --schema pruned --max-cost 4.5 --name pruned_sonnet55_low_k20
-```
-Expected: EX within about ±1–2 points of 68.38% (recall ceiling 98.6%, and fewer distracting tables can
-help a little), cost ~27% higher. Either outcome is a fine result to report.
+Command: `uv run python -m eval.run --model claude-sonnet-5-5 --effort low --schema pruned --max-cost 4.5 --name pruned_sonnet55_low_k20`
+Files: `results/pruned_sonnet55_low_k20.csv` + `_summary.json`.
 
----
+| | Row 1: full schema | Row 2: pruned (hybrid + exact, table, K=20) |
+|---|---|---|
+| EX | 68.38% | **68.45%** |
+| valid SQL | 100% | 100% |
+| schema recall | n/a | 98.6% |
+| prompt tokens / question | 1,669 | 1,439 (−14%) |
+| read from cache | 94% | 78% |
+| output tokens / question | 121.0 | 121.5 |
+| latency p50 / p95 (total) | 2.08 / 4.46 s | 1.72 / 3.05 s (but see control below) |
+| retrieval time p50 | n/a | 9 ms |
+| cost (full dev) | $2.64 | **$3.37** (estimate was $3.36) |
+| cost / 1k | $1.72 | $2.20 (+28%) |
+
+By difficulty (row 2): simple 74.49%, moderate 59.27%, challenging 59.31%.
+
+**Paired comparison (same 1,534 questions):** both right 1,016 · only full right 33 · only pruned right 34 · both wrong 451.
+Exact McNemar test p = 1.00: **no detectable accuracy difference.** (McNemar = the right test for two systems on the
+*same* questions: it only looks at the questions where they disagree.)
+
+**⭐ The natural control group (the most useful analysis in Phase 2).** On 502 questions (4 databases where K=20 kept
+every table) the pruned prompt is **byte-identical** to row 1's prompt. Any change there is not caused by pruning:
+
+| | identical prompt (502, control) | pruned prompt (1,032) |
+|---|---|---|
+| EX row 1 → row 2 | 63.15 → 63.15 | 70.93 → 71.03 |
+| answers that flipped | 16 (**3.2%**) | 51 (4.9%) |
+| generation p50 | 2.25 → 1.81 s | 2.01 → 1.62 s |
+| prompt tokens | 1,139 → 1,139 | 1,926 → 1,584 (−18%) |
+
+What the control tells us:
+1. **Noise floor:** 3.2% of answers flip between two runs of the *same* prompt (Sonnet can't be made deterministic).
+   So any EX difference under ~1 point between two runs is noise, not an effect.
+2. **Pruning adds ~1.7 points of churn** (4.9% vs 3.2% flips) but gains and losses cancel: net +0.1 point.
+3. **The latency "improvement" is not from pruning:** identical prompts got ~20% faster too, meaning the API was faster
+   that day. Same-day back-to-back runs would be needed to measure a latency effect. We don't claim one.
+
+**Recall misses cost a few questions:** the 21 questions where retrieval dropped a needed column: row 1 got 10 right, row 2 got 5.
+On the 1,513 questions with full recall, pruned is slightly ahead (69.07% vs 68.67%), consistent with "less noise in the prompt
+helps a bit", but well inside the noise floor.
+
+**Conclusion for H1 on BIRD dev + Sonnet:** retrieval keeps accuracy (98.6% recall → no measurable EX loss) and cuts prompt tokens
+by 14%, but **costs 28% more** because it breaks prompt-cache reuse (245 distinct system prompts vs 11). For a strong frontier
+model with caching on small schemas, **full schema is the better production choice.** Retrieval's case rests on large schemas,
+uncached/self-hosted models, and small models that degrade on long prompts. That's exactly what Phase 4 tests.
 
 ## 7. Phase 1 files changed in Phase 2 (study these diffs)
 
@@ -605,11 +647,13 @@ uv run python -m eval.run --model claude-sonnet-5-5 --effort low --schema pruned
 7. **Why tune K on train and report on dev?** Choosing on dev overfits the choice to those DBs and inflates the reported number.
 8. **Your prompt got smaller but the cost went up. Why?** Prompt caching: full-schema prompts repeat per DB and are read
    at 10% price; pruned prompts vary per question, so fewer cache hits. Output dominates cost anyway.
-9. **So why do retrieval at all?** Large schemas (58% smaller on >150-column DBs), self-hosted models without a cache,
+9. **Did pruning change accuracy? How do you know it's not noise?** 68.45 vs 68.38; McNemar p = 1.00 on paired questions; and a
+   control group of 502 questions with byte-identical prompts showed a 3.2% flip rate from model randomness alone.
+10. **So why do retrieval at all?** Large schemas (58% smaller on >150-column DBs), self-hosted models without a cache,
    small models that degrade on long noisy prompts (Phase 4), and lower latency.
-10. **Why not use the cross-encoder?** +0.8 recall vs 110 ms/question and GPU memory needed by the local model; measured, then decided.
-11. **Why reuse the original CREATE TABLE text instead of rebuilding it?** To change only one thing in the ablation:
+11. **Why not use the cross-encoder?** +0.8 recall vs 110 ms/question and GPU memory needed by the local model; measured, then decided.
+12. **Why reuse the original CREATE TABLE text instead of rebuilding it?** To change only one thing in the ablation:
     rebuilt DDL is 40% shorter for the same tables, which would inflate "compression".
-12. **Your job ran out of memory. What did you do?** Found the OOM kill in the kernel log (26 GB). Root cause: caching all
+13. **Your job ran out of memory. What did you do?** Found the OOM kill in the kernel log (26 GB). Root cause: caching all
     gold rows. Replaced rows with streamed set fingerprints, added checkpoint/resume + atomic writes, validated the new scoring
     agrees on 1,534/1,534 questions. Same pattern applied to the value index (2.09 GB → 93 MB).

@@ -1,0 +1,52 @@
+{
+  "run": "pruned_sonnet55_low_k20",
+  "model": "claude-sonnet-5-5",
+  "effort": "low",
+  "split": "dev",
+  "limit": null,
+  "workers": 4,
+  "stopped_early": false,
+  "wall_seconds": 733.8151263249999,
+  "prompt": "retrieved (pruned) schema DDL + evidence + question",
+  "retrieval": {
+    "method": "hybrid",
+    "exact": true,
+    "top_k": 20,
+    "granularity": "table",
+    "fk_expand": true,
+    "descriptions": false,
+    "dense_model": "BAAI/bge-small-en-v1.5",
+    "rerank_top_n": 30
+  },
+  "n": 1534,
+  "ex_pct": 68.44850065189048,
+  "valid_sql_pct": 100.0,
+  "api_error_count": 0,
+  "latency_p50_s": 1.7162478184999372,
+  "latency_p95_s": 3.0488328205499613,
+  "prompt_tokens_mean": 1438.5632333767926,
+  "cache_read_pct": 77.82532368780237,
+  "output_tokens_mean": 121.52281616688397,
+  "total_cost_usd": 3.371597,
+  "cost_per_1k_usd": 2.197911994784876,
+  "schema_recall_pct": 98.63102998696219,
+  "compression_mean": 0.8778111663974447,
+  "retrieval_p50_s": 0.008831293500008996,
+  "by_difficulty": {
+    "simple": {
+      "n": 925,
+      "ex_pct": 74.49,
+      "valid_sql_pct": 100.0
+    },
+    "moderate": {
+      "n": 464,
+      "ex_pct": 59.27,
+      "valid_sql_pct": 100.0
+    },
+    "challenging": {
+      "n": 145,
+      "ex_pct": 59.31,
+      "valid_sql_pct": 100.0
+    }
+  }
+}

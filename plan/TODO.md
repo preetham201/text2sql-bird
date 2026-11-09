@@ -70,11 +70,11 @@ Each phase lists **You'll learn** — the concepts to understand well enough to 
 - [x] Schema recall metric (gold tables/columns via sqlglot ⊆ retrieved?) + token compression ratio
 - [x] Tune K vs recall **on train**; confirm on dev
 - [x] Results broken down by schema size (small DBs may not benefit — report it)
-- [ ] Rerun frontier with pruned schema on dev → **row 2**
+- [x] Rerun frontier with pruned schema on dev → **row 2** (68.45% EX, $2.20/1k, recall 98.6%)
 
 **Done when:** full-vs-pruned ablation shows tokens, compression, cost, schema recall, EX%.
 
-✅ **Built (2026-11-08):** hybrid + exact name/value boost, table, K=20: recall 97.5% train / 98.6% dev, schema 83% / 88% of full; dense via numpy (no FAISS needed); reranker measured (+0.8) and left off; inferred FK links added; train gold cache = streamed fingerprints (OOM fix, see notes/failures-log.md). Remaining: row 2 paid run (~$3.4) awaiting approval. Notes: `notes/phase2-retrieval.md`.
+✅ **Built (2026-11-08):** hybrid + exact name/value boost, table, K=20: recall 97.5% train / 98.6% dev, schema 83% / 88% of full; dense via numpy (no FAISS needed); reranker measured (+0.8) and left off; inferred FK links added; train gold cache = streamed fingerprints (OOM fix, see notes/failures-log.md). Row 2 (2026-11-09): 68.45% EX vs 68.38% (McNemar p=1.00), $3.37 vs $2.64. Notes: `notes/phase2-retrieval.md`.
 
 ---
 
